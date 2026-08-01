@@ -1,0 +1,11 @@
+[project]
+name = "ywallhaven"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flet[all]>=0.86.4",
+    "httpx>=0.28.1",
+    "pydantic-settings>=2.14.2",
+]
