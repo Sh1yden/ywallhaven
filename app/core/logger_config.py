@@ -12,18 +12,13 @@ def setup_logging(
     console: bool = True,
     file: bool = True,
 ) -> None:
-    """
-    Настройка корневого логгера приложения.
-    Вызывается один раз при старте.
-    """
+    """ """
 
     log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Корневой логгер приложения
     root_logger = logging.getLogger("ywallhaven")
     root_logger.setLevel(getattr(logging, level.upper()))
 
-    # Очищаем существующие хендлеры
     root_logger.handlers.clear()
 
     # === CONSOLE HANDLER ===
@@ -39,7 +34,6 @@ def setup_logging(
         log_filename = f"{datetime.now().strftime('%Y-%m-%d')}-01.jsonl"
         log_filepath = log_dir / log_filename
 
-        # Найти свободный номер файла
         counter = 1
         while log_filepath.exists():
             counter += 1
@@ -52,13 +46,13 @@ def setup_logging(
         file_handler.setFormatter(json_formatter)
         root_logger.addHandler(file_handler)
 
-    # Отключаем пропагацию в root логгер Python
     root_logger.propagate = False
 
-    # Настраиваем логгеры библиотек
     logging.getLogger("aiogram").setLevel(logging.WARNING)
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("flet").setLevel(logging.WARNING)
+    logging.getLogger("flet_core").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
 class Colors:

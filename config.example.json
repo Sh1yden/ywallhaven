@@ -1,0 +1,9 @@
+Config usually is located in root path. Not necessary create him by yourself.
+He default create in first run app.
+
+{
+    "MODE": "dev or prod",
+    "LOG_LVL": "DEBUG, WARNING, INFO, and etc.",
+    "PORT": 8550,
+    "APIK": "YOUR_WALLHAVEN_API_KEY"
+}

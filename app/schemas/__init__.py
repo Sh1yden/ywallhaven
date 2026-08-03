@@ -1,3 +1,3 @@
 __all__ = ["ConfigSchema"]
 
-from .ConfigSchema import ConfigSchema
+from .config_schema import ConfigSchema
