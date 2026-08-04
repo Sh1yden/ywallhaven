@@ -1,9 +1,11 @@
+"""Application configuration schema."""
+
 from pydantic import BaseModel, Field
 from pydantic_settings import SettingsConfigDict
 
 
 class ConfigSchema(BaseModel):
-    """Base Config App Schema."""
+    """Base application config schema with defaults for dev mode."""
 
     MODE: str = Field(default="dev", description="App mode for logs, dev or prod")
     LOG_LVL: str = Field(default="DEBUG")

@@ -1,3 +1,5 @@
+"""Async client for the Wallhaven public API v1."""
+
 from typing import Any, Dict, List, Optional
 
 from httpx import AsyncClient, HTTPError
@@ -6,6 +8,8 @@ from app.core import LoggerMixin, config
 
 
 class WallhavenAPI(LoggerMixin):
+    """Async HTTP client for the Wallhaven search endpoint."""
+
     BASE_URL = "https://wallhaven.cc/api/v1"
 
     def __init__(self, apik: str | None = None) -> None:
@@ -14,6 +18,7 @@ class WallhavenAPI(LoggerMixin):
         self.client = AsyncClient(base_url=self.BASE_URL, timeout=15.0)
 
     async def close(self):
+        """Close the underlying HTTP client session."""
         await self.client.aclose()
 
     async def search_wallpapers(
@@ -23,6 +28,17 @@ class WallhavenAPI(LoggerMixin):
         categories: Optional[str] = "111",
         purity: Optional[str] = "100",
     ) -> List[Dict[str, Any]]:
+        """Search wallpapers matching the given filters.
+
+        Args:
+            query: Search query string.
+            page: Page number to fetch.
+            categories: Category flags ("111" for all).
+            purity: Purity filter flags ("100" for SFW only).
+
+        Returns:
+            List of wallpaper dicts, or an empty list on failure.
+        """
         params = {
             "q": query,
             "page": page,
@@ -38,6 +54,7 @@ class WallhavenAPI(LoggerMixin):
         try:
             response = await self.client.get("/search", params=params)
             response.raise_for_status()
+            self._lg.debug(f"All response {response.json()}")
             self._lg.debug(
                 f"Wallhaven returned {len(response.json().get('data', []))} items."
             )

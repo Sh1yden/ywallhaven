@@ -1,3 +1,5 @@
+"""Application entry point: run the Flet app in the configured mode."""
+
 import logging
 import json
 import sys
@@ -24,7 +26,7 @@ _lg = get_logger()
 
 
 def cleanup():
-    """Function for cleaning trash."""
+    """Release resources before the application shutdown."""
     try:
         _lg.debug("Running cleaner: realeasing resources... 8)")
 
@@ -36,6 +38,7 @@ def cleanup():
 
 
 def main():
+    """Run the Flet app with the configured view and port."""
     try:
         _lg.info("Trying to run app...")
         _lg.debug(f"Config data is - {config.data}.")

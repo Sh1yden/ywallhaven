@@ -1,5 +1,7 @@
+"""Middle panel: scrollable wallpaper grid with infinite scroll."""
+
 import asyncio
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from flet import (
     GridView,
@@ -11,20 +13,29 @@ from flet import (
     OnScrollEvent,
 )
 from app.core import LoggerMixin
+from app.interface.components.right_panel import RightPanel
 from app.service import WallhavenAPI
 
 
 class MiddlePanel(GridView, LoggerMixin):
+    """Scrollable grid of wallpaper thumbnails with infinite scroll.
+
+    Caches every loaded wallpaper dict so the right panel can show
+    the full properties of a clicked item without an extra API call.
+    """
+
     SCROLL_THRESHOLD = 300
 
-    def __init__(self) -> None:
+    def __init__(self, right_panel: RightPanel) -> None:
         super().__init__()
+        self.right_panel = right_panel
         self.api_client = WallhavenAPI()
         self.expand = 3
         self.runs_count = 4
         self.controls = []
         self.state_page = 1
         self.has_more = True
+        self._wallpapers: List[Dict[str, Any]] = []
 
         self._load_lock = asyncio.Lock()
         self._in_trigger_zone = False
@@ -40,6 +51,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self.page.run_task(self.api_client.close)
 
     async def load_more(self, *args) -> None:
+        """Fetch and append the next page of wallpapers."""
         if not self.has_more:
             return
 
@@ -59,24 +71,48 @@ class MiddlePanel(GridView, LoggerMixin):
                     self.has_more = False
                     return
 
-                self.controls.extend(self._build_title(wp) for wp in wallpapers)
+                start = len(self._wallpapers)
+                self._wallpapers.extend(wallpapers)
+
+                self.controls.extend(
+                    self._build_title(wallpaper, start + i)
+                    for i, wallpaper in enumerate(wallpapers)
+                )
                 self.state_page += 1
                 self.update()
             except Exception as e:
                 self._lg.critical(f"Internal error: {e}.")
 
-    def _build_title(self, wallpaper: Dict[str, Any]) -> Container:
-        thumb_url = wallpaper["thumbs"]["small"]
-        full_url = wallpaper["path"]
+    def _build_title(
+        self, wallpaper: Dict[str, Any], index: int
+    ) -> Container:
+        """Build a thumbnail tile for a wallpaper.
+
+        Args:
+            wallpaper: Wallpaper dict from the API.
+            index: Index of the wallpaper in the local cache.
+
+        Returns:
+            Clickable thumbnail container.
+        """
         return Container(
-            data=full_url,
+            data=index,
             border_radius=8,
+            on_click=self.handle_image_click,
             bgcolor=Colors.GREY_500,
             clip_behavior=ClipBehavior.HARD_EDGE,
-            content=Image(src=thumb_url, fit=BoxFit.COVER),
+            content=Image(
+                src=wallpaper["thumbs"]["small"],
+                fit=BoxFit.COVER,
+            ),
         )
 
     def handle_scroll(self, e: OnScrollEvent) -> None:
+        """Load the next page when scrolled near the bottom.
+
+        Args:
+            e: Scroll event with the current scroll position.
+        """
         if not self.has_more:
             return
 
@@ -91,3 +127,14 @@ class MiddlePanel(GridView, LoggerMixin):
             self.page.run_task(self.load_more)
         elif not near_bottom:
             self._in_trigger_zone = False
+
+    def handle_image_click(self, e) -> None:
+        """Show the clicked wallpaper preview in the right panel.
+
+        Args:
+            e: Click event; the control data holds the cache index.
+        """
+        index = e.control.data
+        wallpaper = self._wallpapers[index]
+        self._lg.debug(f"Wallpaper index is - {index}.")
+        self.right_panel.update_preview(wallpaper)

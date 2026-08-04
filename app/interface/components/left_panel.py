@@ -1,7 +1,10 @@
+"""Left panel of the app layout."""
+
 from flet import Container, Colors, Alignment, Text
 
 
 class LeftPanel(Container):
+    """Placeholder for the left panel."""
     def __init__(self) -> None:
         super().__init__()
         self.expand = 1

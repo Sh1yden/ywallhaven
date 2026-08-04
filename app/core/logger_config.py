@@ -1,4 +1,5 @@
-import inspect
+"""Logging setup: colored console output and JSON file output."""
+
 import logging
 import os
 import sys
@@ -12,7 +13,14 @@ def setup_logging(
     console: bool = True,
     file: bool = True,
 ) -> None:
-    """ """
+    """Configure the root application logger.
+
+    Args:
+        level: Logging level name (e.g. DEBUG, INFO).
+        log_dir: Directory where log files are stored.
+        console: Whether to attach a colored console handler.
+        file: Whether to attach a JSON file handler.
+    """
 
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -56,19 +64,19 @@ def setup_logging(
 
 
 class Colors:
-    """ANSI цвета для терминала"""
+    """ANSI colors for the terminal output."""
 
     RESET = "\033[0m"
 
-    # CONSOLE LOG
-    CURRENT_TIME_COLOR = "\u001b[34;1m"  # Светло синий
-    FILENAME_COLOR = "\u001b[32m"  # Зелёный
-    MODULE_COLOR = "\u001b[33m"  # Желтый
-    CLASS_COLOR = "\u001b[34m"  # Голубой
-    DEF_COLOR = "\u001b[36m"  # Синий
-    MESSAGE_COLOR = "\u001b[37m"  # Белый
+    # Console log
+    CURRENT_TIME_COLOR = "\u001b[34;1m"  # Light blue
+    FILENAME_COLOR = "\u001b[32m"  # Green
+    MODULE_COLOR = "\u001b[33m"  # Yellow
+    CLASS_COLOR = "\u001b[34m"  # Light blue
+    DEF_COLOR = "\u001b[36m"  # Blue
+    MESSAGE_COLOR = "\u001b[37m"  # White
 
-    # LOG LVL
+    # Log level
     RED = "\033[31m"
     GREEN = "\033[32m"
     YELLOW = "\033[33m"
@@ -78,7 +86,7 @@ class Colors:
 
 
 class ColoredConsoleFormatter(logging.Formatter):
-    """Кастомный форматтер для цветного вывода в консоль"""
+    """Custom formatter for colored console output."""
 
     LEVEL_COLORS = {
         "DEBUG": Colors.CYAN,
@@ -89,21 +97,20 @@ class ColoredConsoleFormatter(logging.Formatter):
     }
 
     def format(self, record: logging.LogRecord) -> str:
-        stack = inspect.stack()
-        caller_frame = stack[2].frame
+        """Format a log record as a single colored line.
 
+        Args:
+            record: The log record to format.
+
+        Returns:
+            Formatted string with colored fields.
+        """
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         level = record.levelname
         filename = os.path.basename(record.pathname) if record.pathname else None
         color = self.LEVEL_COLORS.get(record.levelname, Colors.RESET)
 
         full_module = record.name
-        module = record.module
-        # module = inspect.getmodule(
-        #     caller_frame
-        # ).__name__  # pyright: ignore[reportOptionalMemberAccess]
-        cls_obj = caller_frame.f_locals.get("self", None)
-        # cls_name = cls_obj.__class__.__name__ if cls_obj else None
         deff = record.funcName
         message = record.getMessage()
 
@@ -112,8 +119,6 @@ class ColoredConsoleFormatter(logging.Formatter):
             f"{color}{level:<8}{Colors.RESET} | "
             f"{Colors.FILENAME_COLOR}{filename}{Colors.RESET} | "
             f"{Colors.MODULE_COLOR}{full_module}{Colors.RESET} | "
-            # f"{Colors.MODULE_COLOR}{module}{Colors.RESET} | "
-            # f"{Colors.CLASS_COLOR}{cls_name}{Colors.RESET} | "
             f"{Colors.DEF_COLOR}{deff}{Colors.RESET} | "
             f"{message}"
         )
@@ -122,9 +127,17 @@ class ColoredConsoleFormatter(logging.Formatter):
 
 
 class JSONFormatter(logging.Formatter):
-    """JSON форматтер"""
+    """JSON formatter for file log output."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Format a log record as a single JSON object.
+
+        Args:
+            record: The log record to format.
+
+        Returns:
+            JSON-encoded string with the record fields.
+        """
         import json
 
         filename = os.path.basename(record.pathname) if record.pathname else None
@@ -138,7 +151,7 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Добавляем traceback при ошибках
+        # Add traceback for errors
         if record.exc_info:
             log_entry["exception"] = self.formatException(record.exc_info)
 

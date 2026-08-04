@@ -1,3 +1,5 @@
+"""Application config manager: load, validate and persist config.json."""
+
 import json
 from pathlib import Path
 
@@ -8,6 +10,12 @@ from app.schemas import ConfigSchema
 
 
 class Config(LoggerMixin):
+    """Application configuration manager.
+
+    Loads config.json on startup, creates a default one when the file
+    is missing or corrupted, and exposes the validated data.
+    """
+
     def __init__(self, log_lvl: str) -> None:
         self._path = Path("config.json")
 
@@ -25,9 +33,9 @@ class Config(LoggerMixin):
 
         self.data: ConfigSchema = self._load_or_create()
 
-    # Start class method
+    # Loading and validation
     def _load_or_create(self) -> ConfigSchema:
-        # IF File not found
+        # File not found
         if not self._path.exists():
             self._lg.warning("Config not found. Trying to create defult config...")
             default_config = ConfigSchema()
@@ -35,7 +43,7 @@ class Config(LoggerMixin):
             self._lg.debug("Success ;)")
             return default_config
 
-        # IF File found
+        # File found
         try:
             raw_dict = self.load(self._path)
             return ConfigSchema(**raw_dict)
@@ -49,12 +57,29 @@ class Config(LoggerMixin):
             self._lg.critical(f"Internal error: {e}.")
             raise e
 
-    # Read / Save
+    # Read / save
     def load(self, path: Path | str) -> dict:
+        """Read raw JSON content from a file.
+
+        Args:
+            path: Path to the JSON file.
+
+        Returns:
+            Parsed JSON content as a dict.
+        """
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
     def save(self, path: Path | str, config_obj: ConfigSchema | None = None) -> bool:
+        """Persist a config object to a file.
+
+        Args:
+            path: Path to the JSON file.
+            config_obj: Config to save; falls back to self.data.
+
+        Returns:
+            True on success, False otherwise.
+        """
         to_save = config_obj or self.data
         try:
             with open(path, "w", encoding="utf-8") as f:

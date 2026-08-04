@@ -1,3 +1,5 @@
+"""Flet application entry point: builds the main UI layout."""
+
 from flet import Page, SafeArea, Container, Row
 
 from app.core import get_logger
@@ -7,14 +9,19 @@ _lg = get_logger()
 
 
 async def flet_main(page: Page):
+    """Build and mount the main three-panel layout on the page.
+
+    Args:
+        page: The Flet page to render the UI into.
+    """
     _lg.debug("flet_main called...")
 
     page.title = "ywallhaven"
     page.padding = 10
 
     left_panel = LeftPanel()
-    middle_panel = MiddlePanel()
     right_panel = RightPanel()
+    middle_panel = MiddlePanel(right_panel)
 
     page.add(
         SafeArea(
