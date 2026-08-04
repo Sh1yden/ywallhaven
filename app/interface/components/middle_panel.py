@@ -1,10 +1,11 @@
 """Middle panel: scrollable wallpaper grid with infinite scroll."""
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List
 
 from flet import (
     GridView,
+    GestureDetector,
     Container,
     Colors,
     ClipBehavior,
@@ -22,13 +23,19 @@ class MiddlePanel(GridView, LoggerMixin):
 
     Caches every loaded wallpaper dict so the right panel can show
     the full properties of a clicked item without an extra API call.
+    A single click opens the preview, a double click downloads it.
     """
 
     SCROLL_THRESHOLD = 300
 
-    def __init__(self, right_panel: RightPanel) -> None:
+    def __init__(
+        self,
+        right_panel: RightPanel,
+        on_download: Callable[[str, str], None],
+    ) -> None:
         super().__init__()
         self.right_panel = right_panel
+        self.on_download = on_download
         self.api_client = WallhavenAPI()
         self.expand = 3
         self.runs_count = 4
@@ -36,6 +43,8 @@ class MiddlePanel(GridView, LoggerMixin):
         self.state_page = 1
         self.has_more = True
         self._wallpapers: List[Dict[str, Any]] = []
+        self._filters: Dict[str, Any] = {}
+        self._generation = 0
 
         self._load_lock = asyncio.Lock()
         self._in_trigger_zone = False
@@ -50,21 +59,47 @@ class MiddlePanel(GridView, LoggerMixin):
         super().will_unmount()
         self.page.run_task(self.api_client.close)
 
+    def apply_filters(
+        self, api_key: str, filters: Dict[str, Any]
+    ) -> None:
+        """Apply new filters, reset the grid and reload it.
+
+        Args:
+            api_key: Wallhaven API key or an empty string.
+            filters: Search params passed to the API client.
+        """
+        self.api_client.apik = api_key
+        self._filters = dict(filters)
+
+        self._generation += 1
+        self.state_page = 1
+        self.has_more = True
+        self._wallpapers.clear()
+        self.controls.clear()
+        self._in_trigger_zone = False
+
+        self.page.run_task(self.load_more)
+
     async def load_more(self, *args) -> None:
         """Fetch and append the next page of wallpapers."""
         if not self.has_more:
             return
 
         if self._load_lock.locked():
+            self.page.run_task(self._retry_load)
             return
 
         async with self._load_lock:
+            generation = self._generation
             try:
                 self._lg.debug(f"Loading page {self.state_page}...")
 
                 wallpapers = await self.api_client.search_wallpapers(
-                    page=self.state_page
+                    page=self.state_page, **self._filters
                 )
+
+                if generation != self._generation:
+                    return
 
                 if not wallpapers:
                     self._lg.warning("No more wallpapers found.")
@@ -81,11 +116,17 @@ class MiddlePanel(GridView, LoggerMixin):
                 self.state_page += 1
                 self.update()
             except Exception as e:
-                self._lg.critical(f"Internal error: {e}.")
+                if generation == self._generation:
+                    self._lg.critical(f"Internal error: {e}.")
+
+    async def _retry_load(self) -> None:
+        """Wait a bit and retry loading after a stale request."""
+        await asyncio.sleep(0.1)
+        await self.load_more()
 
     def _build_title(
         self, wallpaper: Dict[str, Any], index: int
-    ) -> Container:
+    ) -> GestureDetector:
         """Build a thumbnail tile for a wallpaper.
 
         Args:
@@ -93,17 +134,20 @@ class MiddlePanel(GridView, LoggerMixin):
             index: Index of the wallpaper in the local cache.
 
         Returns:
-            Clickable thumbnail container.
+            Gesture detector with single and double click handlers.
         """
-        return Container(
+        return GestureDetector(
             data=index,
-            border_radius=8,
-            on_click=self.handle_image_click,
-            bgcolor=Colors.GREY_500,
-            clip_behavior=ClipBehavior.HARD_EDGE,
-            content=Image(
-                src=wallpaper["thumbs"]["small"],
-                fit=BoxFit.COVER,
+            on_tap=self.handle_image_click,
+            on_double_tap=self.handle_image_double_click,
+            content=Container(
+                border_radius=8,
+                bgcolor=Colors.GREY_500,
+                clip_behavior=ClipBehavior.HARD_EDGE,
+                content=Image(
+                    src=wallpaper["thumbs"]["small"],
+                    fit=BoxFit.COVER,
+                ),
             ),
         )
 
@@ -132,9 +176,23 @@ class MiddlePanel(GridView, LoggerMixin):
         """Show the clicked wallpaper preview in the right panel.
 
         Args:
-            e: Click event; the control data holds the cache index.
+            e: Tap event; the control data holds the cache index.
         """
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Wallpaper index is - {index}.")
         self.right_panel.update_preview(wallpaper)
+
+    def handle_image_double_click(self, e) -> None:
+        """Download the wallpaper on a double click.
+
+        Args:
+            e: Double tap event; the control data holds the cache index.
+        """
+        index = e.control.data
+        wallpaper = self._wallpapers[index]
+        self._lg.debug(f"Download requested for index - {index}.")
+        self.on_download(
+            wallpaper.get("path", ""),
+            WallhavenAPI.build_filename(wallpaper),
+        )

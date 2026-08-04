@@ -9,6 +9,8 @@ from flet import (
     Colors,
     Column,
     Container,
+    FilledButton,
+    Icons,
     Image,
     Row,
     Stack,
@@ -17,6 +19,7 @@ from flet import (
     TextStyle,
     TextDecoration,
 )
+from app.service import WallhavenAPI
 
 
 class RightPanel(Container):
@@ -25,8 +28,11 @@ class RightPanel(Container):
     PREVIEW_RADIUS = 12
     GAP = 12
 
-    def __init__(self) -> None:
+    def __init__(
+        self, on_download: Callable[[str, str], None]
+    ) -> None:
         super().__init__()
+        self._on_download = on_download
         self.expand = 1
         self.padding = 12
         self.bgcolor = Colors.DEEP_PURPLE_500
@@ -66,9 +72,33 @@ class RightPanel(Container):
             controls=[
                 self._build_preview(wallpaper),
                 self._build_properties(wallpaper),
+                self._build_download_button(),
             ],
         )
         self.update()
+
+    def _build_download_button(self) -> FilledButton:
+        """Build the download button shown below the properties."""
+        return FilledButton(
+            content="Download",
+            icon=Icons.DOWNLOAD,
+            on_click=self._handle_download_click,
+            expand=True,
+        )
+
+    def _handle_download_click(self, e) -> None:
+        """Ask the app to save the current wallpaper.
+
+        Args:
+            e: Click event from the download button.
+        """
+        if self._last_wallpaper is None or self._on_download is None:
+            return
+
+        self._on_download(
+            self._last_wallpaper.get("path", ""),
+            WallhavenAPI.build_filename(self._last_wallpaper),
+        )
 
     # Private builders ----------------------------------------------
 
