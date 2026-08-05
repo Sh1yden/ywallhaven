@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- Фон (Sumi Ink) -->
+  <rect width="256" height="256" rx="56" fill="#1F1F28"/>
+
+  <!-- Адаптивная сетка карточек -->
+  <!-- Карточка 1 (большая) -->
+  <rect x="36" y="36" width="84" height="110" rx="16" fill="#2A2A37" stroke="#363646" stroke-width="4"/>
+  <!-- Карточка 2 (маленькая) -->
+  <rect x="36" y="162" width="84" height="58" rx="16" fill="#2A2A37" stroke="#363646" stroke-width="4"/>
+  <!-- Карточка 3 (маленькая) -->
+  <rect x="136" y="36" width="84" height="58" rx="16" fill="#2A2A37" stroke="#363646" stroke-width="4"/>
+  <!-- Карточка 4 (большая) -->
+  <rect x="136" y="110" width="84" height="110" rx="16" fill="#2A2A37" stroke="#363646" stroke-width="4"/>
+
+  <!-- Тень от неона -->
+  <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#000000" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" transform="translate(0, 4)"/>
+
+  <!-- Линия W поверх сетки (Autumn Gold + Fuji White) -->
+  <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#E6C384" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#DCD7BA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
