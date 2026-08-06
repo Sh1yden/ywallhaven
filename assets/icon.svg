@@ -16,6 +16,6 @@
   <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#000000" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" opacity="0.4" transform="translate(0, 4)"/>
 
   <!-- Линия W поверх сетки (Autumn Gold + Fuji White) -->
-  <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#E6C384" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#879" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M 52 80 L 78 180 L 128 130 L 178 180 L 204 80" fill="none" stroke="#DCD7BA" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>

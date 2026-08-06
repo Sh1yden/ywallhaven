@@ -99,6 +99,26 @@ class WallhavenAPI(LoggerMixin):
             self._lg.error(f"Error by req to Wallhaven: {e}.")
             return []
 
+    async def get_wallpaper(self, wallpaper_id: str) -> Dict[str, Any] | None:
+        """Fetch a single wallpaper by its ID including its tags.
+
+        The search endpoint response does not contain tags, so a detail
+        request is needed to render the clickable tag chips.
+
+        Args:
+            wallpaper_id: Wallhaven wallpaper ID.
+
+        Returns:
+            Wallpaper dict including tags, or None on failure.
+        """
+        try:
+            response = await self.client.get(f"/w/{wallpaper_id}")
+            response.raise_for_status()
+            return response.json().get("data")
+        except HTTPError as e:
+            self._lg.error(f"Failed to fetch wallpaper {wallpaper_id}: {e}.")
+            return None
+
     async def fetch_bytes(self, url: str) -> bytes | None:
         """Download a wallpaper file content as bytes.
 

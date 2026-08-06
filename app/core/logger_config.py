@@ -57,10 +57,25 @@ def setup_logging(
     root_logger.propagate = False
 
     logging.getLogger("aiogram").setLevel(logging.WARNING)
-    logging.getLogger("flet").setLevel(logging.WARNING)
-    logging.getLogger("flet_core").setLevel(logging.WARNING)
     logging.getLogger("uvicorn").setLevel(logging.WARNING)
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+
+    for flet_logger_name in (
+        "flet",
+        "flet_core",
+        "flet_desktop",
+        "flet.messaging",
+        "flet.controls",
+        "flet.app",
+    ):
+        flet_logger = logging.getLogger(flet_logger_name)
+        flet_logger.setLevel(getattr(logging, level.upper()))
+        flet_logger.handlers.clear()
+        if console:
+            flet_logger.addHandler(console_handler)
+        if file:
+            flet_logger.addHandler(file_handler)
+        flet_logger.propagate = False
 
 
 class Colors:

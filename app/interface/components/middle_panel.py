@@ -1,7 +1,7 @@
 """Middle panel: scrollable wallpaper grid with infinite scroll."""
 
 import asyncio
-from typing import Any, Callable, Dict, List
+from typing import Any, Dict, List
 
 from flet import (
     GridView,
@@ -31,11 +31,9 @@ class MiddlePanel(GridView, LoggerMixin):
     def __init__(
         self,
         right_panel: RightPanel,
-        on_download: Callable[[str, str], None],
     ) -> None:
         super().__init__()
         self.right_panel = right_panel
-        self.on_download = on_download
         self.api_client = WallhavenAPI()
         self.expand = 3
         self.runs_count = 4
@@ -124,6 +122,38 @@ class MiddlePanel(GridView, LoggerMixin):
         await asyncio.sleep(0.1)
         await self.load_more()
 
+    async def select_relative(
+        self, delta: int, index: int | None
+    ) -> tuple[int, Dict[str, Any]] | None:
+        """Return an adjacent cached wallpaper, loading more if needed.
+
+        Args:
+            delta: Offset from the current wallpaper index.
+            index: Current wallpaper index in the cache.
+
+        Returns:
+            The target index and its wallpaper dict, or None if the
+            gallery only holds a single item.
+        """
+        if not self._wallpapers:
+            return None
+
+        current = index if index is not None else 0
+        target = current + delta
+        if target < 0:
+            target = 0
+
+        if target >= len(self._wallpapers) and self.has_more:
+            await self.load_more()
+
+        if target >= len(self._wallpapers):
+            target = len(self._wallpapers) - 1
+
+        if target < 0 or target >= len(self._wallpapers):
+            return None
+
+        return target, self._wallpapers[target]
+
     def _build_title(
         self, wallpaper: Dict[str, Any], index: int
     ) -> GestureDetector:
@@ -181,10 +211,10 @@ class MiddlePanel(GridView, LoggerMixin):
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Wallpaper index is - {index}.")
-        self.right_panel.update_preview(wallpaper)
+        self.right_panel.update_preview(wallpaper, index)
 
     def handle_image_double_click(self, e) -> None:
-        """Download the wallpaper on a double click.
+        """Show the resolution chooser for the double-clicked wallpaper.
 
         Args:
             e: Double tap event; the control data holds the cache index.
@@ -192,7 +222,4 @@ class MiddlePanel(GridView, LoggerMixin):
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Download requested for index - {index}.")
-        self.on_download(
-            wallpaper.get("path", ""),
-            WallhavenAPI.build_filename(wallpaper),
-        )
+        self.right_panel.request_download(wallpaper)

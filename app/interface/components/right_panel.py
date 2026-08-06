@@ -1,23 +1,31 @@
 """Right panel: preview and properties of the selected wallpaper."""
 
+import os
 from typing import Any, Callable, Dict, List
 
 from flet import (
+    AlertDialog,
     Alignment,
+    Blur,
     BoxFit,
     ClipBehavior,
     Colors,
     Column,
     Container,
+    CrossAxisAlignment,
     FilledButton,
+    FilledTonalButton,
+    GestureDetector,
+    IconButton,
     Icons,
     Image,
+    ListView,
+    MainAxisAlignment,
+    Padding,
     Row,
     Stack,
     Text,
-    TextSpan,
-    TextStyle,
-    TextDecoration,
+    UrlTarget,
 )
 from app.service import WallhavenAPI
 
@@ -27,20 +35,35 @@ class RightPanel(Container):
 
     PREVIEW_RADIUS = 12
     GAP = 12
+    PRESET_RESOLUTIONS = [
+        (1920, 1080),
+        (2560, 1440),
+        (3440, 1440),
+        (3840, 2160),
+    ]
 
     def __init__(
-        self, on_download: Callable[[str, str], None]
+        self,
+        on_download: Callable[[str, str, tuple[int, int] | None], None],
+        on_tag_click: Callable[[str], None] | None = None,
+        on_navigate: Callable[[int, int | None], Any] | None = None,
     ) -> None:
         super().__init__()
         self._on_download = on_download
+        self._on_tag_click = on_tag_click
+        self._on_navigate = on_navigate
+        self._api_client = WallhavenAPI()
         self.expand = 1
         self.padding = 12
         self.bgcolor = Colors.DEEP_PURPLE_500
         self.alignment = Alignment.CENTER
         self.content = self._build_empty_state()
         self._last_wallpaper: Dict[str, Any] | None = None
+        self._current_index: int | None = None
         self._fullscreen_layer: Container | None = None
         self._fullscreen_image: Image | None = None
+        self._backdrop_image: Image | None = None
+        self._tags_fetch_generation = 0
 
     def did_mount(self) -> None:
         """Create and mount the fullscreen layer above the page."""
@@ -56,22 +79,78 @@ class RightPanel(Container):
             and self._fullscreen_layer in self.page.overlay
         ):
             self.page.overlay.remove(self._fullscreen_layer)
+        self.page.run_task(self._api_client.close)
 
     # Public API ----------------------------------------------------
 
-    def update_preview(self, wallpaper: Dict[str, Any]) -> None:
+    def update_preview(
+        self, wallpaper: Dict[str, Any], index: int | None = None
+    ) -> None:
         """Show the preview and properties of a wallpaper.
 
         Args:
             wallpaper: Wallpaper dict from the Wallhaven API.
+            index: Index of the wallpaper in the loaded grid cache.
         """
         self._last_wallpaper = wallpaper
+        if index is not None:
+            self._current_index = index
+
+        if (
+            self._fullscreen_layer is not None
+            and self._fullscreen_layer.visible
+        ):
+            self._refresh_fullscreen_image()
+
         self.content = Column(
             expand=True,
             spacing=self.GAP,
             controls=[
                 self._build_preview(wallpaper),
-                self._build_properties(wallpaper),
+                self._build_properties_view(wallpaper),
+                self._build_download_button(),
+            ],
+        )
+        self.update()
+
+        self.page.run_task(self._load_tags, wallpaper)
+
+    async def _load_tags(self, wallpaper: Dict[str, Any]) -> None:
+        """Fetch and render the clickable tags of a wallpaper.
+
+        The search endpoint omits tags, so the wallpaper detail is
+        fetched separately and the tag chips are rendered once known.
+
+        Args:
+            wallpaper: Wallpaper dict from the search results.
+        """
+        wallpaper_id = wallpaper.get("id")
+        if not wallpaper_id or wallpaper.get("tags"):
+            return
+
+        generation = self._tags_fetch_generation + 1
+        self._tags_fetch_generation = generation
+        try:
+            detail = await self._api_client.get_wallpaper(wallpaper_id)
+        except Exception:
+            return
+
+        if generation != self._tags_fetch_generation:
+            return
+        if wallpaper is not self._last_wallpaper:
+            return
+
+        tags = (detail or {}).get("tags")
+        if not tags:
+            return
+
+        wallpaper["tags"] = tags
+        self.content = Column(
+            expand=True,
+            spacing=self.GAP,
+            controls=[
+                self._build_preview(wallpaper),
+                self._build_properties_view(wallpaper),
                 self._build_download_button(),
             ],
         )
@@ -83,21 +162,97 @@ class RightPanel(Container):
             content="Download",
             icon=Icons.DOWNLOAD,
             on_click=self._handle_download_click,
-            expand=True,
         )
 
     def _handle_download_click(self, e) -> None:
-        """Ask the app to save the current wallpaper.
+        """Open the resolution chooser for the current wallpaper.
 
         Args:
             e: Click event from the download button.
         """
-        if self._last_wallpaper is None or self._on_download is None:
+        self.request_download(self._last_wallpaper)
+
+    def request_download(
+        self, wallpaper: Dict[str, Any] | None
+    ) -> None:
+        """Show the resolution chooser for the given wallpaper.
+
+        Args:
+            wallpaper: Wallpaper dict from the search results.
+        """
+        if wallpaper is None or self._on_download is None:
             return
 
-        self._on_download(
-            self._last_wallpaper.get("path", ""),
-            WallhavenAPI.build_filename(self._last_wallpaper),
+        self._last_wallpaper = wallpaper
+        self._show_resolution_dialog(wallpaper)
+
+    def _show_resolution_dialog(self, wallpaper: Dict[str, Any]) -> None:
+        """Show the resolution chooser dialog for a wallpaper.
+
+        Args:
+            wallpaper: Wallpaper dict from the search results.
+        """
+        file_name = WallhavenAPI.build_filename(wallpaper)
+        base, ext = os.path.splitext(file_name)
+
+        width = int(wallpaper.get("dimension_x") or 0)
+        height = int(wallpaper.get("dimension_y") or 0)
+
+        options: List[tuple[str, tuple[int, int] | None]] = [("Original", None)]
+        if width and height:
+            options.extend(
+                (f"{w}x{h}", (w, h))
+                for w, h in self.PRESET_RESOLUTIONS
+                if w <= width and h <= height
+            )
+
+        self._dialog = AlertDialog(
+            modal=True,
+            title=Text("Download wallpaper"),
+            actions_alignment=MainAxisAlignment.CENTER,
+            content=Column(
+                tight=True,
+                spacing=8,
+                controls=[
+                    self._resolution_option(label, size, base, ext)
+                    for label, size in options
+                ],
+            ),
+        )
+        self.page.show_dialog(self._dialog)
+
+    def _resolution_option(
+        self,
+        label: str,
+        size: tuple[int, int] | None,
+        base: str,
+        ext: str,
+    ) -> FilledButton:
+        """Build a resolution option button for the download dialog.
+
+        Args:
+            label: Human-readable resolution label.
+            size: Requested pixel size, or None for the original file.
+            base: File name without extension.
+            ext: Original file extension (with the leading dot).
+
+        Returns:
+            Button that triggers the download in the given resolution.
+        """
+        file_name = f"{base}{ext}" if size is None else f"{base}-{label}.jpg"
+
+        def choose(e, size=size, file_name=file_name) -> None:
+            self._dialog.open = False
+            self._dialog.update()
+            self._on_download(
+                self._last_wallpaper.get("path", ""), file_name, size
+            )
+
+        return FilledButton(
+            content=label,
+            width=240,
+            height=38,
+            on_click=choose,
         )
 
     # Private builders ----------------------------------------------
@@ -135,7 +290,12 @@ class RightPanel(Container):
         )
 
     def _build_fullscreen_layer(self) -> Container:
-        """Build the fullscreen overlay shown on preview click.
+        """Build the modernized fullscreen overlay shown on preview click.
+
+        The wallpaper is centered with generous window margins, the area
+        behind it is blurred and dimmed to remove black bars, and the
+        previous / close / next buttons are placed in a centered row
+        below the image.
 
         Returns:
             Fullscreen container with the wallpaper image.
@@ -146,24 +306,92 @@ class RightPanel(Container):
             expand=True,
         )
 
+        self._backdrop_image = Image(
+            src="",
+            fit=BoxFit.COVER,
+            expand=True,
+        )
+
         self._fullscreen_layer = Container(
             visible=False,
             expand=True,
-            bgcolor=Colors.BLACK,
             content=Stack(
                 expand=True,
                 controls=[
-                    self._fullscreen_image,
+                    self._backdrop_image,
                     Container(
                         expand=True,
-                        bgcolor=Colors.TRANSPARENT,
-                        on_click=self.close_fullscreen,
+                        bgcolor=Colors.BLACK54,
+                        blur=Blur(24, 24),
+                    ),
+                    Column(
+                        expand=True,
+                        horizontal_alignment=CrossAxisAlignment.CENTER,
+                        controls=[
+                            Container(
+                                expand=True,
+                                padding=Padding(
+                                    top=36, right=36, bottom=14, left=36
+                                ),
+                                alignment=Alignment.CENTER,
+                                on_click=self.close_fullscreen,
+                                content=self._fullscreen_image,
+                            ),
+                            Row(
+                                spacing=12,
+                                alignment=MainAxisAlignment.CENTER,
+                                controls=[
+                                    self._nav_button(
+                                        Icons.CHEVRON_LEFT,
+                                        self._go_previous,
+                                    ),
+                                    self._nav_button(
+                                        Icons.CLOSE,
+                                        self.close_fullscreen,
+                                    ),
+                                    self._nav_button(
+                                        Icons.CHEVRON_RIGHT,
+                                        self._go_next,
+                                    ),
+                                ],
+                            ),
+                        ],
                     ),
                 ],
             ),
         )
 
         return self._fullscreen_layer
+
+    def _nav_button(self, icon: Any, handler) -> IconButton:
+        """Build a fullscreen navigation button.
+
+        Args:
+            icon: Icon to show on the button.
+            handler: Click handler for the button.
+
+        Returns:
+            Rounded half-transparent navigation button.
+        """
+        return IconButton(
+            icon=icon,
+            icon_color=Colors.WHITE,
+            icon_size=40,
+            padding=10,
+            bgcolor=Colors.BLACK26,
+            on_click=handler,
+        )
+
+    def _refresh_fullscreen_image(self) -> None:
+        """Update the fullscreen image and its blurred backdrop."""
+        if self._last_wallpaper is None or self._fullscreen_layer is None:
+            return
+
+        self._fullscreen_image.src = self._last_wallpaper.get("path")
+        thumbs = self._last_wallpaper.get("thumbs") or {}
+        self._backdrop_image.src = (
+            thumbs.get("large") or self._last_wallpaper.get("path")
+        )
 
     def open_fullscreen(self, e) -> None:
         """Show the current wallpaper image in fullscreen.
@@ -174,7 +402,7 @@ class RightPanel(Container):
         if self._last_wallpaper is None or self._fullscreen_layer is None:
             return
 
-        self._fullscreen_image.src = self._last_wallpaper.get("path")
+        self._refresh_fullscreen_image()
         self._fullscreen_layer.visible = True
         self._fullscreen_layer.update()
 
@@ -190,14 +418,69 @@ class RightPanel(Container):
         self._fullscreen_layer.visible = False
         self._fullscreen_layer.update()
 
-    def _build_properties(self, wallpaper: Dict[str, Any]) -> Column:
-        """Build the properties column from a wallpaper dict.
+    def _go_previous(self, e) -> None:
+        """Show the previous wallpaper in fullscreen.
+
+        Args:
+            e: Click event from the previous button.
+        """
+        self.page.run_task(self._navigate, -1)
+
+    def _go_next(self, e) -> None:
+        """Show the next wallpaper in fullscreen.
+
+        Args:
+            e: Click event from the next button.
+        """
+        self.page.run_task(self._navigate, 1)
+
+    async def _navigate(self, delta: int) -> None:
+        """Move to an adjacent wallpaper and refresh the fullscreen view.
+
+        Args:
+            delta: Direction and step of the navigation.
+        """
+        if self._on_navigate is None:
+            return
+
+        result = await self._on_navigate(delta, self._current_index)
+        if not result:
+            return
+
+        index, wallpaper = result
+        if index == self._current_index:
+            return
+
+        self.update_preview(wallpaper, index)
+        if self._fullscreen_layer is not None:
+            self._fullscreen_layer.update()
+
+    def _build_properties_view(self, wallpaper: Dict[str, Any]) -> ListView:
+        """Build a scrollable properties list for the right panel.
+
+        The properties and tags are placed in a scrollable list so the
+        download button stays pinned at the bottom of the panel.
+
+        Args:
+            wallpaper: Wallpaper dict from the API.
+
+        Returns:
+            Scrollable list view with all the property rows.
+        """
+        return ListView(
+            expand=True,
+            spacing=6,
+            controls=[c for c in self._build_properties(wallpaper)],
+        )
+
+    def _build_properties(self, wallpaper: Dict[str, Any]) -> List[Any]:
+        """Build the properties controls from a wallpaper dict.
 
         Args:
             wallpaper: Wallpaper dict from the Wallhaven API.
 
         Returns:
-            Column with property rows, colors, tags and links.
+            List with property rows, colors, tags and links.
         """
         rows = [
             self._make_row("Resolution", wallpaper.get("resolution")),
@@ -219,10 +502,7 @@ class RightPanel(Container):
         controls.append(self._make_tags_row(wallpaper.get("tags")))
         controls.append(self._make_links_row(wallpaper))
 
-        return Column(
-            spacing=6,
-            controls=[c for c in controls if c is not None],
-        )
+        return [c for c in controls if c is not None]
 
     @staticmethod
     def _make_row(label: str, value: Any) -> Row | None:
@@ -299,9 +579,8 @@ class RightPanel(Container):
             ],
         )
 
-    @staticmethod
-    def _make_tags_row(tags: Any) -> Row | None:
-        """Build a row of tag chips.
+    def _make_tags_row(self, tags: Any) -> Row | None:
+        """Build a row of clickable tag chips.
 
         Args:
             tags: List of tag dicts from the API.
@@ -317,27 +596,40 @@ class RightPanel(Container):
             spacing=6,
             run_spacing=6,
             controls=[
-                Container(
-                    padding=6,
-                    border_radius=6,
-                    bgcolor=Colors.GREY_800,
-                    content=Text(
-                        tag.get("name", ""),
-                        size=11,
+                GestureDetector(
+                    on_tap=lambda e, name=tag.get("name", ""):
+                    self._open_tag(name),
+                    content=Container(
+                        padding=6,
+                        border_radius=6,
+                        bgcolor=Colors.GREY_800,
+                        content=Text(
+                            tag.get("name", ""),
+                            size=11,
+                        ),
                     ),
                 )
                 for tag in tags
             ],
         )
 
+    def _open_tag(self, name: str) -> None:
+        """Run a search for the given tag.
+
+        Args:
+            name: Tag name to search for.
+        """
+        if name and self._on_tag_click:
+            self._on_tag_click(name)
+
     def _make_links_row(self, wallpaper: Dict[str, Any]) -> Row | None:
-        """Build clickable links for a wallpaper.
+        """Build compact buttons for a wallpaper links.
 
         Args:
             wallpaper: Wallpaper dict from the Wallhaven API.
 
         Returns:
-            Wrapped row with clickable links, or None if no links exist.
+            Wrapped row with compact link buttons, or None if no links exist.
         """
         links = {
             "Page": wallpaper.get("url"),
@@ -351,37 +643,33 @@ class RightPanel(Container):
 
         return Row(
             wrap=True,
-            spacing=10,
+            spacing=8,
             run_spacing=6,
             controls=[
-                Text(
-                    size=12,
-                    spans=[
-                        TextSpan(
-                            text=label,
-                            style=TextStyle(
-                                color=Colors.BLUE_200,
-                                decoration=TextDecoration.UNDERLINE,
-                            ),
-                            on_click=self._make_launcher(url),
-                        )
-                    ],
+                FilledTonalButton(
+                    height=28,
+                    content=Text(label, size=11),
+                    icon=Icons.OPEN_IN_NEW,
+                    on_click=self._make_launcher(url),
                 )
                 for label, url in links.items()
             ],
         )
 
     def _make_launcher(self, url: str) -> Callable:
-        """Return a handler that opens the URL in a browser.
+        """Return a handler that opens the URL in the system browser.
 
         Args:
             url: URL to open.
 
         Returns:
-            Click handler for the link control.
+            Async click handler for the link control.
         """
 
-        def _launch(e) -> None:
-            self.page.launch_url(url)
+        async def _launch(e) -> None:
+            await self.page.launch_url(
+                url,
+                web_popup_window_name=UrlTarget.BLANK,
+            )
 
         return _launch

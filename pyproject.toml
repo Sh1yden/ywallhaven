@@ -9,4 +9,5 @@ dependencies = [
     "httpx>=0.28.1",
     "pydantic-settings>=2.14.2",
     "pyinstaller>=6.21.0",
+    "pillow>=11.0.0",
 ]
