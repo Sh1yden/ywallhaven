@@ -39,9 +39,8 @@
 - Дозагрузка размеров для обоев без `dimension_x/y` при выборе
   разрешения.
 - SnackBar-уведомления о статусе скачивания и проверки обновлений.
-- Реальная логика в `cleanup()`: чистка temp-файлов апдейта,
-  ротация `ywallhaven_updater.log`; HTTP-клиенты закрываются
-  через `page.on_disconnect`.
+- Реальная логика в `cleanup()`: чистка temp-файлов апдейта
+  и ротация `ywallhaven_updater.log`.
 - Тесты `tests/test_wallhaven_api.py` (моки httpx).
 - Метод `Config.update()` для персиста настроек из панели.
 
@@ -54,15 +53,22 @@
 
 ### Исправлено
 
-- Автообновление: `UpdaterError` вместо вводящего в заблуждение
-  «everything up to date» при сетевых ошибках.
-- Автообновление: 404 от GitHub API — лишний слэш в URL
-  (`/releases/?per_page=10`), релизы теперь запрашиваются без него.
 - Фуллскрин: дублирующее превью в углу экрана.
 - Не все обои показывали выбор разрешения при отсутствии
   `dimension_x/y` в ответе поиска.
 - Ненадёжные уведомления об успехе/неуспехе скачивания.
 - Мелкий нечитаемый диалог «Up to date» при проверке обновлений.
+
+## [0.7.1] - 2026-08-14
+
+### Исправлено
+
+- Автообновление: 404 от GitHub API — лишний слэш в URL
+  (`/releases/?per_page=10`), релизы теперь запрашиваются без него.
+- Автообновление: `UpdaterError` вместо вводящего в заблуждение
+  «everything up to date» при сетевых ошибках.
+- `cleanup()`: HTTP-клиенты закрываются через `page.on_disconnect`
+  в живом цикле — «Event loop is closed» больше не возникает.
 
 ## [0.6.1] - 2026-08-13
 
@@ -199,7 +205,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.5.0...v0.6.0
