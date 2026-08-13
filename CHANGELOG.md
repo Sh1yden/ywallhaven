@@ -33,6 +33,23 @@
   в настройках, без перезапуска.
 - [x] Теги у NSFW-обоев (передача `apikey` в запрос деталей).
 
+## [0.7.3] - 2026-08-14
+
+### Исправлено
+
+- Автообновление падало при скачивании: HTTP-клиент `UpdaterService`
+  закрывался сразу после проверки релизов (`finally` в
+  `check_and_offer`), а диалог получал уже закрытый клиент —
+  «Cannot send a request, as the client has been closed». Клиент
+  теперь живёт, пока открыт диалог, и закрывается при его закрытии
+  или после запуска апдейтера.
+
+### Добавлено
+
+- Регрессионные тесты `tests/test_update_flow.py`: клиент остаётся
+  открытым при предложении релиза, закрывается при ошибке/пустом
+  ответе проверки, при закрытии диалога и перед `window.destroy()`.
+
 ## [0.7.2] - 2026-08-14
 
 ### Исправлено
@@ -254,7 +271,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...HEAD
+[0.7.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.6.1...v0.7.0

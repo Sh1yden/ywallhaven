@@ -65,13 +65,13 @@ async def check_and_offer(page: Any, *, manual: bool = False) -> None:
             release = await updater.check_update()
         except Exception as e:
             _lg.error(f"Update check failed: {e}.", exc_info=True)
+            await updater.close()
             if manual:
                 UpdateDialog.show_message(page, "Update check failed", True)
             return
-        finally:
-            await updater.close()
 
         if release is None:
+            await updater.close()
             if manual:
                 _lg.info("Update check finished: up to date.")
                 UpdateDialog.show_message(page, "Up to date")
@@ -189,8 +189,9 @@ class UpdateDialog:
         )
 
     def _close(self) -> None:
-        """Close the dialog."""
+        """Close the dialog and release the updater client."""
         self.page.pop_dialog()
+        self.page.run_task(self.updater.close)
 
     @guard
     def _on_update_click(self, e) -> None:
@@ -266,6 +267,7 @@ class UpdateDialog:
             self._set_error("updater helper unavailable")
             return
 
+        await self.updater.close()
         await self.page.window.destroy()
 
     async def _download(self) -> Path | None:
