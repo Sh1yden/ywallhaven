@@ -16,11 +16,11 @@ class Config(LoggerMixin):
     is missing or corrupted, and exposes the validated data.
     """
 
-    def __init__(self, log_lvl: str) -> None:
+    def __init__(self, mode: str) -> None:
         self._path = Path("config.json")
 
-        self._mode = "dev"
-        self._log_lvl = log_lvl
+        self._mode = mode
+        self._log_lvl = "DEBUG" if mode == "dev" else "WARN"
 
         if self._path.exists():
             raw = self.load(self._path)
@@ -70,19 +70,24 @@ class Config(LoggerMixin):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def save(self, path: Path | str, config_obj: ConfigSchema | None = None) -> bool:
+    def save(
+        self,
+        path: Path | str | None = None,
+        config_obj: ConfigSchema | None = None,
+    ) -> bool:
         """Persist a config object to a file.
 
         Args:
-            path: Path to the JSON file.
+            path: Path to the JSON file; falls back to self._path.
             config_obj: Config to save; falls back to self.data.
 
         Returns:
             True on success, False otherwise.
         """
         to_save = config_obj or self.data
+        target = path or self._path
         try:
-            with open(path, "w", encoding="utf-8") as f:
+            with open(target, "w", encoding="utf-8") as f:
                 f.write(to_save.model_dump_json(indent=4))
                 return True
         except Exception as e:
@@ -90,4 +95,4 @@ class Config(LoggerMixin):
             return False
 
 
-config = Config("DEBUG")
+config = Config("dev")

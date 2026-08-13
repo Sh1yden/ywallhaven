@@ -21,7 +21,27 @@
 - [x] Наполнение `README.md`
 - [x] fix LICENSE.
 - [ ] Makefile
-- [ ] Auto Update btn & file
+- [x] Auto Update btn & file
+
+## [0.6.0] - 2026-08-13
+
+### Добавлено
+
+- Автообновление с GitHub Releases: `UpdaterService`, диалог с прогрессом
+  и проверкой SHA-256, helper `ywallhaven-updater.exe`.
+- Динамическая версия из git-тегов через `hatch-vcs`.
+- `scripts/build.py` — сборка `ywallhaven.exe` и `ywallhaven-updater.exe`.
+- Тесты `tests/test_updater.py` (версии, пре-релизы, целостность, апдейт).
+- Поля конфига `CHECK_UPDATES` и `CHECK_PRERELEASES`.
+- Кнопка «Check for updates» и версия приложения в настройках.
+- Тихая проверка обновлений при старте.
+- CI-сборка на GitHub Actions с авто-релизом по тегу (суффикс
+  `-rc`/`-beta`/`-alpha` → pre-release).
+
+### Изменено
+
+- `.gitignore` — spec-файлы версионируются.
+- README.md — инструкция по сборке и автообновлению.
 
 ## [0.5.0] - 2026-08-07
 
@@ -129,6 +149,7 @@
 - Черновой `README.md`.
 
 [Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.5.0...HEAD
+[0.6.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.2.0...v0.3.0

@@ -30,7 +30,6 @@ MANIFEST
 #   Usually these files are written by a python script from a template
 #   before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
-*.spec
 
 # Installer logs
 pip-log.txt
@@ -217,6 +216,10 @@ pyrightconfig.json
 
 # My config
 config.json
+
+# Generated at build time
+app/core/_version.py
+build/version_info.txt
 
 # Marimo
 marimo/_static/

@@ -1,3 +1,4 @@
-__all__ = ["ConfigSchema"]
+__all__ = ["ConfigSchema", "AssetInfo", "ReleaseInfo"]
 
 from .config_schema import ConfigSchema
+from .updater_schema import AssetInfo, ReleaseInfo

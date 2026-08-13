@@ -25,6 +25,7 @@ from flet import (
     Row,
     Stack,
     Text,
+    TextButton,
     UrlTarget,
 )
 from app.service import WallhavenAPI
@@ -35,6 +36,7 @@ class RightPanel(Container):
 
     PREVIEW_RADIUS = 12
     GAP = 12
+    TAG_CHIP_LIMIT = 10
     PRESET_RESOLUTIONS = [
         (1920, 1080),
         (2560, 1440),
@@ -64,6 +66,7 @@ class RightPanel(Container):
         self._fullscreen_image: Image | None = None
         self._backdrop_image: Image | None = None
         self._tags_fetch_generation = 0
+        self._tags_expanded = False
 
     def did_mount(self) -> None:
         """Create and mount the fullscreen layer above the page."""
@@ -93,6 +96,7 @@ class RightPanel(Container):
             index: Index of the wallpaper in the loaded grid cache.
         """
         self._last_wallpaper = wallpaper
+        self._tags_expanded = False
         if index is not None:
             self._current_index = index
 
@@ -210,6 +214,9 @@ class RightPanel(Container):
             modal=True,
             title=Text("Download wallpaper"),
             actions_alignment=MainAxisAlignment.CENTER,
+            actions=[
+                TextButton("Cancel", on_click=self._close_dialog),
+            ],
             content=Column(
                 tight=True,
                 spacing=8,
@@ -220,6 +227,15 @@ class RightPanel(Container):
             ),
         )
         self.page.show_dialog(self._dialog)
+
+    def _close_dialog(self, e) -> None:
+        """Close the resolution chooser dialog without downloading.
+
+        Args:
+            e: Click event from the cancel button.
+        """
+        self._dialog.open = False
+        self._dialog.update()
 
     def _resolution_option(
         self,
@@ -582,6 +598,10 @@ class RightPanel(Container):
     def _make_tags_row(self, tags: Any) -> Row | None:
         """Build a row of clickable tag chips.
 
+        When there are more tags than :attr:`TAG_CHIP_LIMIT`, only the
+        first chips are rendered together with a "+N more" button that
+        reveals the rest (see :meth:`_expand_tags`).
+
         Args:
             tags: List of tag dicts from the API.
 
@@ -591,27 +611,59 @@ class RightPanel(Container):
         if not tags:
             return None
 
+        visible_tags = (
+            list(tags)
+            if self._tags_expanded
+            else list(tags)[: self.TAG_CHIP_LIMIT]
+        )
+        hidden_count = len(tags) - len(visible_tags)
+
+        chips = [
+            GestureDetector(
+                on_tap=self._make_tag_handler(tag),
+                content=Container(
+                    padding=6,
+                    border_radius=6,
+                    bgcolor=Colors.GREY_800,
+                    content=Text(
+                        tag.get("name", ""),
+                        size=11,
+                    ),
+                ),
+            )
+            for tag in visible_tags
+        ]
+
+        if hidden_count > 0:
+            chips.append(
+                TextButton(
+                    content=f"+{hidden_count} more",
+                    on_click=self._expand_tags,
+                )
+            )
+
         return Row(
             wrap=True,
             spacing=6,
             run_spacing=6,
-            controls=[
-                GestureDetector(
-                    on_tap=lambda e, name=tag.get("name", ""):
-                    self._open_tag(name),
-                    content=Container(
-                        padding=6,
-                        border_radius=6,
-                        bgcolor=Colors.GREY_800,
-                        content=Text(
-                            tag.get("name", ""),
-                            size=11,
-                        ),
-                    ),
-                )
-                for tag in tags
-            ],
+            controls=chips,
         )
+
+    def _make_tag_handler(self, tag: Dict[str, Any]) -> Callable:
+        """Return an async-safe tap handler for a single tag chip.
+
+        Args:
+            tag: Tag dict from the API.
+
+        Returns:
+            Click handler that opens the tag search.
+        """
+        name = tag.get("name", "")
+
+        def handler(e) -> None:
+            self._open_tag(name)
+
+        return handler
 
     def _open_tag(self, name: str) -> None:
         """Run a search for the given tag.
@@ -621,6 +673,27 @@ class RightPanel(Container):
         """
         if name and self._on_tag_click:
             self._on_tag_click(name)
+
+    def _expand_tags(self, e) -> None:
+        """Show the full list of tag chips for the current wallpaper.
+
+        Args:
+            e: Click event from the "+N more" button.
+        """
+        if self._last_wallpaper is None:
+            return
+
+        self._tags_expanded = True
+        self.content = Column(
+            expand=True,
+            spacing=self.GAP,
+            controls=[
+                self._build_preview(self._last_wallpaper),
+                self._build_properties_view(self._last_wallpaper),
+                self._build_download_button(),
+            ],
+        )
+        self.update()
 
     def _make_links_row(self, wallpaper: Dict[str, Any]) -> Row | None:
         """Build compact buttons for a wallpaper links.

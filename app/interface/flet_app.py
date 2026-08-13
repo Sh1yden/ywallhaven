@@ -1,14 +1,21 @@
 """Flet application entry point: builds the main UI layout."""
 
 import asyncio
+import sys
 from io import BytesIO
+from pathlib import Path
 from typing import Any
 
 from flet import (
     Colors,
+    Column,
     Container,
     FilePicker,
     FilePickerFileType,
+    Icon,
+    IconButton,
+    Icons,
+    Image,
     Page,
     Row,
     SafeArea,
@@ -16,12 +23,57 @@ from flet import (
     SnackBarBehavior,
     Text,
 )
-from PIL import Image
+from PIL import Image as PILImage
 
-from app.core import get_logger
-from app.interface.components import LeftPanel, MiddlePanel, RightPanel
+from app.core import config, get_logger
+from app.interface.components import (
+    LeftPanel,
+    MiddlePanel,
+    RightPanel,
+    SettingsPanel,
+)
+from app.interface.components.update_dialog import check_and_offer
 
 _lg = get_logger()
+
+
+def _candidate_icon_paths() -> tuple[Path, ...]:
+    """Return the paths where the bundled app icon may live.
+
+    Order matters: PyInstaller onefile extracts data into ``sys._MEIPASS``,
+    then the source-tree location, then the working directory. PNG is
+    preferred: the Flet (Flutter) client does not render SVG files.
+    """
+    roots = [
+        Path(getattr(sys, "_MEIPASS", None)) if getattr(sys, "_MEIPASS", None) else None,
+        Path(__file__).resolve().parent.parent.parent,
+        Path.cwd(),
+    ]
+    candidates: list[Path] = []
+    for root in roots:
+        if root is None:
+            continue
+        candidates.append(root / "assets" / "icon.png")
+        candidates.append(root / "assets" / "icon.svg")
+    return tuple(dict.fromkeys(candidates))
+
+
+def _app_icon_bytes() -> bytes | None:
+    """Read the bundled app icon as bytes for the header logo.
+
+    Returns:
+        Parsed raw bytes of assets/icon.svg, or None if unavailable.
+    """
+    for icon_path in _candidate_icon_paths():
+        try:
+            return icon_path.read_bytes()
+        except FileNotFoundError:
+            continue
+        except Exception as e:
+            _lg.error(f"Failed to load app icon from {icon_path}: {e}.")
+            return None
+    _lg.error("App icon not found in any candidate location.")
+    return None
 
 
 def _resize_image(data: bytes, size: tuple[int, int]) -> bytes | None:
@@ -35,7 +87,7 @@ def _resize_image(data: bytes, size: tuple[int, int]) -> bytes | None:
         Resized image bytes, or None if resizing is not possible.
     """
     try:
-        image = Image.open(BytesIO(data))
+        image = PILImage.open(BytesIO(data))
         if getattr(image, "is_animated", False):
             return None
         image.thumbnail((size[0], size[1]), Image.LANCZOS)
@@ -181,16 +233,57 @@ async def _build_ui(page: Page) -> None:
         right_panel=right_panel,
     )
     left_panel = LeftPanel(middle_panel)
+    settings_panel = SettingsPanel()
+
+    icon_bytes = _app_icon_bytes()
+    logo = (
+        Image(src=icon_bytes, width=28, height=28)
+        if icon_bytes is not None
+        else Icon(Icons.WALLPAPER, size=24)
+    )
+    header = Row(
+        spacing=8,
+        controls=[
+            logo,
+            Text(
+                "ywallhaven",
+                size=16,
+                weight="w700",
+            ),
+            IconButton(
+                icon=Icons.SETTINGS,
+                icon_size=22,
+                tooltip="Settings",
+                on_click=settings_panel.toggle_settings,
+            ),
+        ],
+    )
 
     page.add(
         SafeArea(
             expand=True,
             content=Container(
                 border_radius=10,
-                content=Row(
+                content=Column(
                     spacing=8,
-                    controls=[left_panel, middle_panel, right_panel],
+                    expand=True,
+                    controls=[
+                        header,
+                        Row(
+                            spacing=8,
+                            expand=True,
+                            controls=[
+                                left_panel,
+                                middle_panel,
+                                right_panel,
+                            ],
+                        ),
+                    ],
                 ),
             ),
         )
     )
+    page.overlay.append(settings_panel)
+
+    if config.data.CHECK_UPDATES:
+        page.run_task(check_and_offer, page, False)
