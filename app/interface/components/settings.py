@@ -75,7 +75,7 @@ class SettingsPanel(Container):
             e: Click event from the update button.
         """
         self.close_settings(e)
-        self.page.run_task(check_and_offer, self.page, True)
+        self.page.run_task(check_and_offer, self.page, manual=True)
 
     # Private builders ----------------------------------------------
 

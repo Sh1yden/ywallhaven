@@ -286,4 +286,4 @@ async def _build_ui(page: Page) -> None:
     page.overlay.append(settings_panel)
 
     if config.data.CHECK_UPDATES:
-        page.run_task(check_and_offer, page, False)
+        page.run_task(check_and_offer, page, manual=False)
