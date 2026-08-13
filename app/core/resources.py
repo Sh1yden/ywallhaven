@@ -1,6 +1,5 @@
 """Global registry of closable resources for a graceful shutdown."""
 
-import asyncio
 from typing import Awaitable, Callable
 
 Closer = Callable[[], Awaitable[None]]
@@ -22,8 +21,3 @@ async def close_all() -> None:
     while _closers:
         closer = _closers.pop()
         await closer()
-
-
-def run_close_all() -> None:
-    """Close all registered resources from synchronous code."""
-    asyncio.run(close_all())

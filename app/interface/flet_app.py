@@ -27,6 +27,7 @@ from flet import (
 from PIL import Image as PILImage
 
 from app.core import config, get_logger
+from app.core.resources import close_all
 from app.interface.components import (
     LeftPanel,
     MiddlePanel,
@@ -159,6 +160,17 @@ async def _build_ui(page: Page) -> None:
         _lg.critical(f"Page error: {e}.")
 
     page.on_error = on_page_error
+
+    def on_disconnect(e) -> None:
+        """Release the registered resources before the session dies.
+
+        Args:
+            e: Disconnect event from the Flet client.
+        """
+        _lg.debug("Session disconnected; closing resources...")
+        page.run_task(close_all)
+
+    page.on_disconnect = on_disconnect
 
     file_picker = FilePicker()
 

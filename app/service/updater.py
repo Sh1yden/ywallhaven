@@ -30,7 +30,7 @@ class UpdaterService(LoggerMixin):
     """
 
     REPO = "Sh1yden/ywallhaven"
-    API_URL = f"https://api.github.com/repos/{REPO}/releases"
+    API_URL = "https://api.github.com"
     ASSET_NAME = "ywallhaven.exe"
     REQUEST_TIMEOUT = 15.0
     CHUNK_SIZE = 64 * 1024
@@ -79,13 +79,19 @@ class UpdaterService(LoggerMixin):
         Pre-releases are skipped unless enabled in the config. The
         release must contain an asset named ``ywallhaven.exe`` and its
         version must be newer than the running one.
+
+        Raises:
+            UpdaterError: When the GitHub API cannot be reached.
         """
         try:
-            response = await self.client.get("", params={"per_page": self.PER_PAGE})
+            response = await self.client.get(
+                f"/repos/{self.REPO}/releases",
+                params={"per_page": self.PER_PAGE},
+            )
             response.raise_for_status()
         except HTTPError as e:
             self._lg.error(f"Failed to fetch releases from GitHub: {e}.")
-            return None
+            raise UpdaterError("GitHub API request failed") from e
 
         for raw_release in response.json():
             release = self._parse_release(raw_release)

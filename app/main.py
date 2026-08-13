@@ -7,8 +7,6 @@ import os
 from pathlib import Path
 from tempfile import gettempdir
 
-from app.core.resources import run_close_all
-
 is_prod = False
 try:
     with open("config.json", "r", encoding="utf-8") as f:
@@ -60,10 +58,6 @@ def cleanup():
     """Release resources before the application shutdown."""
     try:
         _lg.debug("Running cleaner: releasing resources... 8)")
-
-        _lg.debug("Trying to close api clients...")
-        run_close_all()
-        _lg.debug("Api clients closed.")
 
         _lg.debug("Cleaning up leftover update files...")
         _cleanup_update_files()

@@ -9,7 +9,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from app.service import UpdaterService
+from app.service import UpdaterError, UpdaterService
 from app.schemas import AssetInfo
 
 API_BODY_200 = "https://api.github.com/repos/Sh1yden/ywallhaven/releases"
@@ -155,10 +155,32 @@ async def test_handles_api_error_gracefully():
         transport=httpx.MockTransport(handler),
     )
 
-    release = await updater.check_update()
-
-    assert release is None
+    with pytest.raises(UpdaterError):
+        await updater.check_update()
     await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_releases_url_has_no_trailing_slash():
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json=[])
+
+    updater = UpdaterService(current_version="0.5.0")
+    updater.client = httpx.AsyncClient(
+        base_url=UpdaterService.API_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    await updater.check_update()
+    await updater.close()
+
+    assert seen["url"].startswith(
+        "https://api.github.com/repos/Sh1yden/ywallhaven/"
+        "releases?per_page=10"
+    )
 
 
 @pytest.mark.asyncio

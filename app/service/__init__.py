@@ -1,4 +1,4 @@
-__all__ = ["WallhavenAPI", "UpdaterService"]
+__all__ = ["WallhavenAPI", "UpdaterService", "UpdaterError"]
 
-from .updater import UpdaterService
+from .updater import UpdaterError, UpdaterService
 from .wallhaven_api import WallhavenAPI
