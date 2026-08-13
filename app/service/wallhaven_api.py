@@ -117,9 +117,15 @@ class WallhavenAPI(LoggerMixin):
         Returns:
             Wallpaper dict including tags, or None on failure.
         """
+        params: Dict[str, Any] = {}
+        if self.apik:
+            params["apikey"] = self.apik
+
         try:
             start = time.perf_counter()
-            response = await self.client.get(f"/w/{wallpaper_id}")
+            response = await self.client.get(
+                f"/w/{wallpaper_id}", params=params
+            )
             response.raise_for_status()
             elapsed_ms = (time.perf_counter() - start) * 1000
             self._lg.debug(

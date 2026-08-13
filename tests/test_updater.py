@@ -242,6 +242,87 @@ def test_verify_sha256_rejects_missing_digest():
         fake.unlink(missing_ok=True)
 
 
+def test_verify_sha256_rejects_unreadable_file():
+    asset = AssetInfo(**convert_asset(release_payload("v0.6.0")["assets"][0]))
+    missing = Path("/tmp/nonexistent-update.exe")
+
+    assert not UpdaterService.verify_sha256(missing, asset)
+
+
+def test_parse_release_returns_none_for_broken_payload():
+    assert UpdaterService._parse_release({"assets": [None]}) is None
+
+
+@pytest.mark.asyncio
+async def test_download_asset_returns_none_without_asset():
+    updater = make_updater([])
+    release = await updater.check_update()  # noqa: F841
+
+    payload = release_payload("v0.6.0")
+    empty_release = updater._parse_release({
+        **payload, "assets": [{"name": "other.exe", "url": "x"}],
+    })
+
+    path = await updater.download_asset(empty_release)
+    assert path is None
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_download_asset_reports_progress():
+    payloads = [release_payload("v0.6.0")]
+    updater = make_updater(payloads)
+    release = await updater.check_update()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-length": "3"},
+            content=b"exe",
+        )
+
+    updater.client = httpx.AsyncClient(
+        base_url=UpdaterService.API_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    progress = []
+    path = await updater.download_asset(
+        release, progress=lambda done, total: progress.append((done, total))
+    )
+
+    assert path is not None
+    assert progress == [(3, 3)]
+    path.unlink(missing_ok=True)
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_download_asset_returns_none_on_http_error():
+    updater = make_updater([])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500)
+
+    updater.client = httpx.AsyncClient(
+        base_url=UpdaterService.API_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    release = updater._parse_release(release_payload("v0.6.0"))
+    path = await updater.download_asset(release)
+    assert path is None
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_refuses_from_sources():
+    updater = make_updater([])
+
+    assert updater.launch_updater(Path("/tmp/fake-update.exe")) is False
+    await updater.close()
+
+
 # Standalone updater helper ----------------------------------------
 
 from updater.main import _process_alive, _wait_for_exit

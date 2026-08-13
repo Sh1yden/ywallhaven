@@ -4,6 +4,8 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 from app.core.config import Config
 
 
@@ -45,3 +47,49 @@ def test_update_merges_and_persists(tmp_path, monkeypatch) -> None:
     )
     assert persisted["THEME"] == "light"
     assert persisted["APIK"] == "test-key"
+
+
+def test_corrupted_json_is_recreated(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
+
+    cfg = Config("dev")
+
+    assert cfg.data.MODE == "dev"
+    recreated = json.loads(
+        (tmp_path / "config.json").read_text(encoding="utf-8")
+    )
+    assert recreated["MODE"] == "dev"
+
+
+def test_invalid_fields_are_recreated(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.json").write_text(
+        json.dumps({"PORT": "not-an-int"}), encoding="utf-8"
+    )
+
+    cfg = Config("dev")
+
+    assert cfg.data.PORT == 9864
+
+
+def test_load_errors_are_raised(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    cfg = Config("dev")
+
+    def broken_load(path) -> dict:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cfg, "load", broken_load)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        cfg._load_or_create()
+
+
+def test_save_failure_returns_false(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    cfg = Config("dev")
+
+    target = tmp_path / "missing" / "config.json"
+    assert cfg.save(target, cfg.data) is False

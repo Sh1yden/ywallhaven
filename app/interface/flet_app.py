@@ -272,8 +272,18 @@ async def _build_ui(page: Page) -> None:
         right_panel=right_panel,
     )
     left_panel = LeftPanel(middle_panel)
+
+    def on_api_key_change(api_key: str) -> None:
+        """Propagate the API key from the settings to both panels.
+
+        Args:
+            api_key: New Wallhaven API key or an empty string.
+        """
+        left_panel.set_api_key(api_key)
+        right_panel.set_api_key(api_key)
+
     settings_panel = SettingsPanel(
-        on_api_key_change=left_panel.set_api_key,
+        on_api_key_change=on_api_key_change,
     )
 
     icon_bytes = _app_icon_bytes()

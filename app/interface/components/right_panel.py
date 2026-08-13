@@ -91,6 +91,15 @@ class RightPanel(Container):
 
     # Public API ----------------------------------------------------
 
+    def set_api_key(self, api_key: str) -> None:
+        """Update the API key used for wallpaper detail requests.
+
+        Args:
+            api_key: New Wallhaven API key or an empty string.
+        """
+        _lg.debug("Updating the API key of the right panel client.")
+        self._api_client.apik = api_key
+
     def update_preview(
         self, wallpaper: Dict[str, Any], index: int | None = None
     ) -> None:

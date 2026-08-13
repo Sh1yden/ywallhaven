@@ -27,6 +27,37 @@
 - [x] Наполнение `README.md`
 - [x] fix LICENSE.
 - [x] Auto Update btn & file
+- [x] Убрать поле API-ключа из левой панели (ключ вводится только
+  в настройках).
+- [x] Разблокировка NSFW/Sketchy сразу после ввода ключа
+  в настройках, без перезапуска.
+- [x] Теги у NSFW-обоев (передача `apikey` в запрос деталей).
+
+## [0.7.2] - 2026-08-14
+
+### Исправлено
+
+- Поле API-ключа убрано из левой панели — ключ вводится только
+  в настройках, фильтры и поиск берут его из `config.json`.
+- NSFW/Sketchy разблокируются сразу после ввода ключа в настройках,
+  без перезапуска приложения.
+- Теги у NSFW-обоев — API-ключ теперь передаётся и в запрос деталей,
+  и в запрос тегов.
+- `NameError: name 'sys' is not defined` в `UpdaterService.launch_updater`
+  (модуль не импортировал `sys`).
+- Битый `config.json` (невалидный JSON) валил приложение при старте —
+  чтение MODE/LOG_LVL выполнялось вне обработки ошибок; теперь битый
+  файл пересоздаётся как задокументировано.
+
+### Добавлено
+
+- Покрытие тестами: до 61 теста (60 passed + 1 skipped). Новые наборы:
+  `error_handling` (guard, хуки), форматтеры логов, реестр ресурсов,
+  `main` (cleanup/ротация лога), фильтры левой панели (purity без
+  ключа и с ключом), edge-кейсы апдейтера и конфига. Итог покрытия:
+  `config.py` 100%, `updater.py` 82%, `wallhaven_api.py` 97%,
+  `error_handling.py` 98%, суммарно по `app/` 51% (UI-слой по природе
+  не покрыт).
 
 ## [0.7.1] - 2026-08-14
 
@@ -223,7 +254,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.6.0...v0.6.1

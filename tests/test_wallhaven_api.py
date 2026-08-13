@@ -92,6 +92,22 @@ async def test_get_wallpaper_returns_data():
 
 
 @pytest.mark.asyncio
+async def test_get_wallpaper_sends_apikey():
+    """NSFW details must be requested with the API key."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"data": WALLPAPER})
+
+    api = make_client(handler)
+    await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert seen["params"]["apikey"] == "test-key"
+
+
+@pytest.mark.asyncio
 async def test_get_wallpaper_returns_none_on_http_error():
     api = make_client(lambda request: httpx.Response(404))
     result = await api.get_wallpaper("abc123")

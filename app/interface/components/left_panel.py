@@ -109,15 +109,6 @@ class LeftPanel(Container, LoggerMixin):
 
         self._search_apply_seq = 0
 
-        self._api_key_field = TextField(
-            label="API key",
-            hint_text="Required for NSFW / favorites",
-            password=True,
-            can_reveal_password=True,
-            value=config.data.APIK,
-            on_change=self._handle_api_key_change,
-        )
-
         self._general_cb = Checkbox(
             label="General", value=True, on_change=self._handle_category_change
         )
@@ -219,7 +210,6 @@ class LeftPanel(Container, LoggerMixin):
                     spacing=8,
                     controls=[self._search_field, self._apply_button],
                 ),
-                self._api_key_field,
                 Text("Categories", size=14, weight="w700"),
                 self._general_cb,
                 self._anime_cb,
@@ -254,15 +244,15 @@ class LeftPanel(Container, LoggerMixin):
         """
         self._apply()
 
-    def _handle_api_key_change(self, e) -> None:
-        """Enable or disable purity filters depending on the API key.
-
-        Args:
-            e: Change event from the API key field.
+    def _refresh_purity_state(self) -> None:
+        """Enable or disable the NSFW/Sketchy checkboxes depending on the
+        API key from the config.
         """
-        has_key = bool((self._api_key_field.value or "").strip())
+        has_key = bool(config.data.APIK)
         self._sketchy_cb.disabled = not has_key
         self._nsfw_cb.disabled = not has_key
+        self._sketchy_cb.update()
+        self._nsfw_cb.update()
         self.update()
 
     def _handle_sorting_change(self, e) -> None:
@@ -390,7 +380,7 @@ class LeftPanel(Container, LoggerMixin):
         Returns:
             Dict with search params for the API client.
         """
-        api_key = (self._api_key_field.value or "").strip()
+        api_key = config.data.APIK
 
         categories = "".join(
             str(int(b))
@@ -437,8 +427,8 @@ class LeftPanel(Container, LoggerMixin):
         return filters
 
     def _apply(self) -> None:
-        """Save the API key and reload the gallery with new filters."""
-        api_key = (self._api_key_field.value or "").strip()
+        """Reload the gallery with the current filters."""
+        api_key = config.data.APIK
         query = (self._search_field.value or "").strip()
 
         if self._sorting_dd.value == "relevance" and not query:
@@ -447,10 +437,6 @@ class LeftPanel(Container, LoggerMixin):
             )
             self._search_field.update()
             return
-
-        if api_key != config.data.APIK:
-            config.data.APIK = api_key
-            config.save()
 
         masked = f"{api_key[:4]}***" if api_key else "<empty>"
         self._lg.debug(f"Applied filters (api key: {masked}).")
@@ -472,5 +458,5 @@ class LeftPanel(Container, LoggerMixin):
         Args:
             api_key: New Wallhaven API key or an empty string.
         """
-        self._api_key_field.value = api_key
+        self._refresh_purity_state()
         self._apply()

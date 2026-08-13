@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sys
 from pathlib import Path
 from subprocess import Popen
 from tempfile import gettempdir

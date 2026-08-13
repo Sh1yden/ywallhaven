@@ -23,7 +23,10 @@ class Config(LoggerMixin):
         self._log_lvl = "DEBUG" if mode == "dev" else "WARN"
 
         if self._path.exists():
-            raw = self.load(self._path)
+            try:
+                raw = self.load(self._path)
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raw = {}
             self._mode = raw.get("MODE", "dev")
             self._log_lvl = raw.get("LOG_LVL", "DEBUG")
 
