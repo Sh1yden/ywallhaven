@@ -22,6 +22,7 @@ from flet import (
     SnackBar,
     SnackBarBehavior,
     Text,
+    ThemeMode,
 )
 from PIL import Image as PILImage
 
@@ -112,14 +113,13 @@ def _show_snack(page: Page, message: str, is_error: bool = False) -> None:
         message: Text to display.
         is_error: Whether to style the snack as an error.
     """
-    snack = SnackBar(
-        content=Text(message),
-        open=True,
-        behavior=SnackBarBehavior.FLOATING,
-        bgcolor=Colors.RED if is_error else Colors.GREEN,
+    page.show_dialog(
+        SnackBar(
+            content=Text(message),
+            behavior=SnackBarBehavior.FLOATING,
+            bgcolor=Colors.RED if is_error else Colors.GREEN,
+        )
     )
-    page.overlay.append(snack)
-    snack.update()
 
 
 async def flet_main(page: Page):
@@ -146,6 +146,9 @@ async def _build_ui(page: Page) -> None:
 
     page.title = "ywallhaven"
     page.padding = 10
+    page.theme_mode = (
+        ThemeMode.LIGHT if config.data.THEME == "light" else ThemeMode.DARK
+    )
 
     def on_page_error(e) -> None:
         """Log any unhandled exception happening on the page.
@@ -182,15 +185,24 @@ async def _build_ui(page: Page) -> None:
                 data = resized
                 _lg.debug(f"Wallpaper resized to {size[0]}x{size[1]}.")
 
-        saved = await file_picker.save_file(
-            dialog_title="Save wallpaper",
-            file_name=file_name,
-            file_type=FilePickerFileType.CUSTOM,
-            allowed_extensions=["jpg", "png", "gif", "webp", "bmp"],
-            src_bytes=data,
-        )
+        saved = None
+        try:
+            saved = await file_picker.save_file(
+                dialog_title="Save wallpaper",
+                file_name=file_name,
+                file_type=FilePickerFileType.CUSTOM,
+                allowed_extensions=["jpg", "png", "gif", "webp", "bmp"],
+                src_bytes=data,
+            )
+        except Exception as e:
+            _lg.error(f"Save dialog failed: {e}.")
+            _show_snack(page, "Save failed", is_error=True)
+            return
+
         if saved:
             _show_snack(page, "Wallpaper downloaded")
+        else:
+            _show_snack(page, "Save cancelled")
 
     def request_save(
         url: str, file_name: str, size: tuple[int, int] | None = None
@@ -233,7 +245,9 @@ async def _build_ui(page: Page) -> None:
         right_panel=right_panel,
     )
     left_panel = LeftPanel(middle_panel)
-    settings_panel = SettingsPanel()
+    settings_panel = SettingsPanel(
+        on_api_key_change=left_panel.set_api_key,
+    )
 
     icon_bytes = _app_icon_bytes()
     logo = (

@@ -14,6 +14,7 @@ from flet import (
     OnScrollEvent,
 )
 from app.core import LoggerMixin
+from app.core.resources import register
 from app.interface.components.right_panel import RightPanel
 from app.service import WallhavenAPI
 
@@ -35,6 +36,7 @@ class MiddlePanel(GridView, LoggerMixin):
         super().__init__()
         self.right_panel = right_panel
         self.api_client = WallhavenAPI()
+        register(self.api_client.close)
         self.expand = 3
         self.runs_count = 4
         self.controls = []

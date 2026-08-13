@@ -28,6 +28,7 @@ from flet import (
     TextButton,
     UrlTarget,
 )
+from app.core.resources import register
 from app.service import WallhavenAPI
 
 
@@ -55,6 +56,7 @@ class RightPanel(Container):
         self._on_tag_click = on_tag_click
         self._on_navigate = on_navigate
         self._api_client = WallhavenAPI()
+        register(self._api_client.close)
         self.expand = 1
         self.padding = 12
         self.bgcolor = Colors.DEEP_PURPLE_500
@@ -193,24 +195,28 @@ class RightPanel(Container):
     def _show_resolution_dialog(self, wallpaper: Dict[str, Any]) -> None:
         """Show the resolution chooser dialog for a wallpaper.
 
+        When the search response lacks the wallpaper dimensions, the
+        detail endpoint is polled in the background and the dialog is
+        refreshed with the resolution presets once they are known.
+
         Args:
             wallpaper: Wallpaper dict from the search results.
         """
-        file_name = WallhavenAPI.build_filename(wallpaper)
-        base, ext = os.path.splitext(file_name)
-
         width = int(wallpaper.get("dimension_x") or 0)
         height = int(wallpaper.get("dimension_y") or 0)
 
-        options: List[tuple[str, tuple[int, int] | None]] = [("Original", None)]
+        base, ext = self._file_parts(wallpaper)
+        controls: List[Any] = [
+            self._resolution_option("Original", None, base, ext),
+        ]
         if width and height:
-            options.extend(
-                (f"{w}x{h}", (w, h))
+            controls.extend(
+                self._resolution_option(f"{w}x{h}", (w, h), base, ext)
                 for w, h in self.PRESET_RESOLUTIONS
                 if w <= width and h <= height
             )
 
-        self._dialog = AlertDialog(
+        dialog = AlertDialog(
             modal=True,
             title=Text("Download wallpaper"),
             actions_alignment=MainAxisAlignment.CENTER,
@@ -220,13 +226,70 @@ class RightPanel(Container):
             content=Column(
                 tight=True,
                 spacing=8,
-                controls=[
-                    self._resolution_option(label, size, base, ext)
-                    for label, size in options
-                ],
+                controls=controls,
             ),
         )
-        self.page.show_dialog(self._dialog)
+        self._dialog = dialog
+        self.page.show_dialog(dialog)
+
+        if not width or not height:
+            self.page.run_task(
+                self._load_resolution_details, wallpaper, dialog
+            )
+
+    async def _load_resolution_details(
+        self, wallpaper: Dict[str, Any], dialog: AlertDialog
+    ) -> None:
+        """Fetch the missing wallpaper dimensions and refresh the dialog.
+
+        Args:
+            wallpaper: Wallpaper dict from the search results.
+            dialog: The open resolution chooser to refresh.
+        """
+        detail = await self._api_client.get_wallpaper(
+            str(wallpaper.get("id", ""))
+        )
+        if not detail:
+            return
+
+        if dialog is not self._dialog or not dialog.open:
+            return
+
+        width = int(detail.get("dimension_x") or 0)
+        height = int(detail.get("dimension_y") or 0)
+        if not width or not height:
+            return
+
+        wallpaper["dimension_x"] = width
+        wallpaper["dimension_y"] = height
+        base, ext = self._file_parts(wallpaper)
+        dialog.content = Column(
+            tight=True,
+            spacing=8,
+            controls=[
+                self._resolution_option("Original", None, base, ext),
+                *(
+                    self._resolution_option(f"{w}x{h}", (w, h), base, ext)
+                    for w, h in self.PRESET_RESOLUTIONS
+                    if w <= width and h <= height
+                ),
+            ],
+        )
+        dialog.update()
+
+    def _file_parts(
+        self, wallpaper: Dict[str, Any]
+    ) -> tuple[str, str]:
+        """Split the wallpaper file name into base and extension.
+
+        Args:
+            wallpaper: Wallpaper dict from the search results.
+
+        Returns:
+            Tuple of the base name and the extension with the dot.
+        """
+        file_name = WallhavenAPI.build_filename(wallpaper)
+        return os.path.splitext(file_name)
 
     def _close_dialog(self, e) -> None:
         """Close the resolution chooser dialog without downloading.
@@ -296,7 +359,7 @@ class RightPanel(Container):
             expand=True,
             border_radius=self.PREVIEW_RADIUS,
             clip_behavior=ClipBehavior.HARD_EDGE,
-            bgcolor=Colors.GREY_900,
+            bgcolor=Colors.SURFACE_DIM,
             on_click=self.open_fullscreen,
             content=Image(
                 src=wallpaper.get("path"),
@@ -328,13 +391,19 @@ class RightPanel(Container):
             expand=True,
         )
 
+        self._backdrop = Container(
+            expand=True,
+            clip_behavior=ClipBehavior.HARD_EDGE,
+            content=self._backdrop_image,
+        )
+
         self._fullscreen_layer = Container(
             visible=False,
             expand=True,
             content=Stack(
                 expand=True,
                 controls=[
-                    self._backdrop_image,
+                    self._backdrop,
                     Container(
                         expand=True,
                         bgcolor=Colors.BLACK54,
@@ -399,15 +468,17 @@ class RightPanel(Container):
         )
 
     def _refresh_fullscreen_image(self) -> None:
-        """Update the fullscreen image and its blurred backdrop."""
+        """Update the fullscreen image and its blurred backdrop.
+
+        The backdrop reuses the full-size source so both layers stay
+        in sync and no half-blurred thumbnail shows up at the edges.
+        """
         if self._last_wallpaper is None or self._fullscreen_layer is None:
             return
 
-        self._fullscreen_image.src = self._last_wallpaper.get("path")
-        thumbs = self._last_wallpaper.get("thumbs") or {}
-        self._backdrop_image.src = (
-            thumbs.get("large") or self._last_wallpaper.get("path")
-        )
+        src = self._last_wallpaper.get("path")
+        self._fullscreen_image.src = src
+        self._backdrop_image.src = src
 
     def open_fullscreen(self, e) -> None:
         """Show the current wallpaper image in fullscreen.

@@ -7,5 +7,6 @@ He default create in first run app.
     "PORT": 8550,
     "APIK": "YOUR_WALLHAVEN_API_KEY",
     "CHECK_UPDATES": true,
-    "CHECK_PRERELEASES": false
+    "CHECK_PRERELEASES": false,
+    "THEME": "dark or light"
 }

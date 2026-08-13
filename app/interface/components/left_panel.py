@@ -464,3 +464,12 @@ class LeftPanel(Container, LoggerMixin):
         self._search_field.value = name
         self._search_field.update()
         self._apply()
+
+    def set_api_key(self, api_key: str) -> None:
+        """Apply an API key edited in the settings panel.
+
+        Args:
+            api_key: New Wallhaven API key or an empty string.
+        """
+        self._api_key_field.value = api_key
+        self._apply()

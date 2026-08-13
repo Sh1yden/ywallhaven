@@ -95,4 +95,19 @@ class Config(LoggerMixin):
             return False
 
 
+def update(self, **kwargs: object) -> bool:
+        """Merge new values into the config and persist them.
+
+        Args:
+            kwargs: Config field values to override.
+
+        Returns:
+            True on success, False otherwise.
+        """
+        merged = self.data.model_dump()
+        merged.update(kwargs)
+        self.data = ConfigSchema(**merged)
+        return self.save()
+
+
 config = Config("dev")

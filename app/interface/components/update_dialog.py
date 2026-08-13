@@ -10,8 +10,13 @@ from flet import (
     Colors,
     Container,
     FilledButton,
+    Icon,
+    Icons,
     MainAxisAlignment,
     ProgressBar,
+    Row,
+    SnackBar,
+    SnackBarBehavior,
     Text,
     TextButton,
 )
@@ -125,19 +130,28 @@ class UpdateDialog:
 
     @staticmethod
     def show_message(page: Any, message: str, is_error: bool = False) -> None:
-        """Show a non-modal status dialog.
+        """Show a status snack with an icon.
 
         Args:
             page: The Flet page.
             message: Text to display.
-            is_error: Whether to style the dialog as an error.
+            is_error: Whether to style the snack as an error.
         """
+        icon = Icons.ERROR_OUTLINE if is_error else Icons.CHECK_CIRCLE
         color = Colors.RED if is_error else Colors.GREEN
-        dialog = AlertDialog(
-            modal=False,
-            content=Text(message, color=color),
+        page.show_dialog(
+            SnackBar(
+                content=Row(
+                    spacing=10,
+                    controls=[
+                        Icon(icon, size=18),
+                        Text(message, size=14),
+                    ],
+                ),
+                bgcolor=color,
+                behavior=SnackBarBehavior.FLOATING,
+            )
         )
-        page.show_dialog(dialog)
 
     # Private helpers ----------------------------------------------
 
@@ -157,7 +171,7 @@ class UpdateDialog:
         return Container(
             content=Text(
                 body or f"Release {release.tag_name}",
-                color=Colors.WHITE_70,
+                color=Colors.ON_SURFACE_VARIANT,
                 size=12,
             ),
         )
