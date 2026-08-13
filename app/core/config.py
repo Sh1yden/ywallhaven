@@ -94,8 +94,7 @@ class Config(LoggerMixin):
             self._lg.critical(f"Failed to save config: {e}.")
             return False
 
-
-def update(self, **kwargs: object) -> bool:
+    def update(self, **kwargs: object) -> bool:
         """Merge new values into the config and persist them.
 
         Args:

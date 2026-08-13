@@ -28,11 +28,14 @@ from flet import (
     ThemeMode,
 )
 
-from app.core import config
+from app.core import config, get_logger
+from app.core.error_handling import guard
 from app.core.version import __version__
 from app.interface.components.update_dialog import check_and_offer
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
+
+_lg = get_logger()
 
 
 class SettingsPanel(Container):
@@ -65,6 +68,9 @@ class SettingsPanel(Container):
         if not self.visible:
             self._sync_from_config()
         self.visible = not self.visible
+        _lg.debug(
+            f"Settings overlay {'opened' if self.visible else 'closed'}."
+        )
         self.update()
 
     def open_settings(self, e) -> None:
@@ -75,6 +81,7 @@ class SettingsPanel(Container):
         """
         self._sync_from_config()
         self.visible = True
+        _lg.debug("Settings overlay opened.")
         self.update()
 
     def close_settings(self, e) -> None:
@@ -84,6 +91,7 @@ class SettingsPanel(Container):
             e: Click event from the close button or backdrop.
         """
         self.visible = False
+        _lg.debug("Settings overlay closed.")
         self.update()
 
     # Event handlers ------------------------------------------------
@@ -94,45 +102,78 @@ class SettingsPanel(Container):
         Args:
             e: Click event from the save button.
         """
+        old_data = config.data
+        old_api_key = old_data.APIK
         api_key = (self._api_key_field.value or "").strip()
 
         try:
             port = int((self._port_field.value or "").strip() or 0)
         except ValueError:
+            _lg.warning("Settings save aborted: invalid port value.")
             self._port_field.error = "Invalid port"
             self._port_field.update()
             return
 
-        old_theme = config.data.THEME
+        old_theme = old_data.THEME
         new_theme = self._theme_dd.value or old_theme
 
-        config.update(
-            THEME=new_theme,
-            APIK=api_key,
-            MODE=self._mode_dd.value or config.data.MODE,
-            LOG_LVL=self._log_lvl_dd.value or config.data.LOG_LVL,
-            PORT=port,
-            CHECK_UPDATES=bool(self._check_updates_sw.value),
-            CHECK_PRERELEASES=bool(self._prereleases_sw.value),
-        )
+        updates = {
+            "THEME": new_theme,
+            "APIK": api_key,
+            "MODE": self._mode_dd.value or old_data.MODE,
+            "LOG_LVL": self._log_lvl_dd.value or old_data.LOG_LVL,
+            "PORT": port,
+            "CHECK_UPDATES": bool(self._check_updates_sw.value),
+            "CHECK_PRERELEASES": bool(self._prereleases_sw.value),
+        }
+
+        changed = [
+            key for key, value in updates.items()
+            if getattr(old_data, key) != value
+        ]
+        if "APIK" in changed:
+            changed.remove("APIK")
+        api_key_changed = api_key != old_api_key
+
+        try:
+            config.update(**updates)
+        except Exception as exc:
+            _lg.error(
+                f"Failed to save settings: {exc}.",
+                exc_info=True,
+            )
+            self._show_save_error()
+            return
+
+        if changed or api_key_changed:
+            details = ", ".join(changed) if changed else "none"
+            if api_key_changed:
+                details += ", API key updated"
+            _lg.info(f"Settings saved. Changed: {details}.")
+        else:
+            _lg.info("Settings saved; no changes.")
 
         if new_theme != old_theme:
+            _lg.info(f"Applying theme {old_theme} -> {new_theme}.")
             self.page.theme_mode = (
                 ThemeMode.LIGHT if new_theme == "light" else ThemeMode.DARK
             )
             self.page.update()
 
-        if self._on_api_key_change is not None:
+        if self._on_api_key_change is not None and api_key_changed:
+            _lg.debug("Propagating the new API key to the left panel.")
             self._on_api_key_change(api_key)
 
         self._show_saved_notice()
 
+    @guard
     def _on_check_updates(self, e) -> None:
         """Run a manual update check in the background.
 
         Args:
             e: Click event from the update button.
         """
+        _lg.info("Manual update check requested.")
         self.close_settings(e)
         self.page.run_task(check_and_offer, self.page, manual=True)
 
@@ -156,6 +197,16 @@ class SettingsPanel(Container):
                 content=Text("Settings saved"),
                 behavior=SnackBarBehavior.FLOATING,
                 bgcolor=Colors.GREEN,
+            )
+        )
+
+    def _show_save_error(self) -> None:
+        """Show an error snack when persisting the settings fails."""
+        self.page.show_dialog(
+            SnackBar(
+                content=Text("Failed to save settings"),
+                behavior=SnackBarBehavior.FLOATING,
+                bgcolor=Colors.RED,
             )
         )
 

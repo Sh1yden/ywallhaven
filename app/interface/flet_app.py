@@ -27,6 +27,7 @@ from flet import (
 from PIL import Image as PILImage
 
 from app.core import config, get_logger
+from app.core.error_handling import install_loop_exception_handler
 from app.core.resources import close_all
 from app.interface.components import (
     LeftPanel,
@@ -130,6 +131,7 @@ async def flet_main(page: Page):
         page: The Flet page to render the UI into.
     """
     _lg.debug("flet_main called...")
+    install_loop_exception_handler()
     try:
         await _build_ui(page)
     except Exception as e:
@@ -186,6 +188,13 @@ async def _build_ui(page: Page) -> None:
             file_name: Suggested file name.
             size: Optional target resolution for a downscaled copy.
         """
+        if size is not None:
+            _lg.info(
+                f"Downloading {file_name} "
+                f"(resize: {size[0]}x{size[1]})."
+            )
+        else:
+            _lg.info(f"Downloading {file_name} (original size).")
         data = await middle_panel.api_client.fetch_bytes(url)
         if data is None:
             _show_snack(page, "Download failed", is_error=True)
@@ -207,13 +216,18 @@ async def _build_ui(page: Page) -> None:
                 src_bytes=data,
             )
         except Exception as e:
-            _lg.error(f"Save dialog failed: {e}.")
+            _lg.error(f"Save dialog failed: {e}.", exc_info=True)
             _show_snack(page, "Save failed", is_error=True)
             return
 
         if saved:
+            _lg.info(
+                f"Wallpaper saved as {saved} "
+                f"({len(data)} bytes)."
+            )
             _show_snack(page, "Wallpaper downloaded")
         else:
+            _lg.info(f"Save cancelled by the user ({file_name}).")
             _show_snack(page, "Save cancelled")
 
     def request_save(
@@ -234,6 +248,7 @@ async def _build_ui(page: Page) -> None:
         Args:
             tag_name: Tag name to search for.
         """
+        _lg.debug(f"Tag clicked: {tag_name!r}.")
         left_panel.search_tag(tag_name)
 
     def on_navigate(delta: int, index: int | None) -> Any:
@@ -310,6 +325,11 @@ async def _build_ui(page: Page) -> None:
         )
     )
     page.overlay.append(settings_panel)
+
+    _lg.info(
+        f"UI ready: theme={config.data.THEME}, "
+        f"check_updates={config.data.CHECK_UPDATES}."
+    )
 
     if config.data.CHECK_UPDATES:
         page.run_task(check_and_offer, page, manual=False)

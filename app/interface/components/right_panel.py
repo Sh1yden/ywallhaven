@@ -28,8 +28,11 @@ from flet import (
     TextButton,
     UrlTarget,
 )
+from app.core import get_logger
 from app.core.resources import register
 from app.service import WallhavenAPI
+
+_lg = get_logger()
 
 
 class RightPanel(Container):
@@ -489,6 +492,7 @@ class RightPanel(Container):
         if self._last_wallpaper is None or self._fullscreen_layer is None:
             return
 
+        _lg.debug(f"Fullscreen opened for {self._last_wallpaper.get('id')}.")
         self._refresh_fullscreen_image()
         self._fullscreen_layer.visible = True
         self._fullscreen_layer.update()
@@ -502,6 +506,7 @@ class RightPanel(Container):
         if self._fullscreen_layer is None:
             return
 
+        _lg.debug("Fullscreen closed.")
         self._fullscreen_layer.visible = False
         self._fullscreen_layer.update()
 
@@ -530,6 +535,7 @@ class RightPanel(Container):
         if self._on_navigate is None:
             return
 
+        _lg.debug(f"Fullscreen navigate: delta={delta}.")
         result = await self._on_navigate(delta, self._current_index)
         if not result:
             return

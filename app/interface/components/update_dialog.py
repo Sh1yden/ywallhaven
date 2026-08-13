@@ -22,6 +22,7 @@ from flet import (
 )
 
 from app.core import get_logger
+from app.core.error_handling import guard
 from app.core.version import __version__
 from app.schemas import ReleaseInfo
 from app.service import UpdaterService
@@ -45,18 +46,25 @@ async def check_and_offer(page: Any, *, manual: bool = False) -> None:
     global _startup_checked
 
     if not manual and _startup_checked:
+        _lg.debug("Startup update check skipped (already done).")
         return
     _startup_checked = True
 
     if _check_lock.locked():
+        _lg.debug("Update check skipped (another check is running).")
         return
+
+    if manual:
+        _lg.info("Checking for updates...")
+    else:
+        _lg.debug("Checking for updates on startup...")
 
     async with _check_lock:
         updater = UpdaterService()
         try:
             release = await updater.check_update()
         except Exception as e:
-            _lg.error(f"Update check failed: {e}.")
+            _lg.error(f"Update check failed: {e}.", exc_info=True)
             if manual:
                 UpdateDialog.show_message(page, "Update check failed", True)
             return
@@ -65,9 +73,13 @@ async def check_and_offer(page: Any, *, manual: bool = False) -> None:
 
         if release is None:
             if manual:
+                _lg.info("Update check finished: up to date.")
                 UpdateDialog.show_message(page, "Up to date")
+            else:
+                _lg.debug("Update check finished: up to date.")
             return
 
+        _lg.info(f"Offering update to {release.version}.")
         UpdateDialog(page, updater, release).open()
 
 
@@ -180,12 +192,14 @@ class UpdateDialog:
         """Close the dialog."""
         self.page.pop_dialog()
 
+    @guard
     def _on_update_click(self, e) -> None:
         """Disable the actions and start the update task.
 
         Args:
             e: Click event.
         """
+        _lg.info(f"Update to {self.release.version} accepted by the user.")
         if self._busy:
             return
         self._busy = True
@@ -221,6 +235,14 @@ class UpdateDialog:
 
     async def _apply(self) -> None:
         """Download, verify and install the new executable."""
+        try:
+            await self._install()
+        except Exception as e:
+            _lg.error(f"Update failed: {e}.", exc_info=True)
+            self._set_error(str(e))
+
+    async def _install(self) -> None:
+        """Run the download -> verify -> launch pipeline."""
         path = await self._download()
         if path is None:
             return

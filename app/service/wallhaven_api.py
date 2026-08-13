@@ -1,5 +1,6 @@
 """Async client for the Wallhaven public API v1."""
 
+import time
 from typing import Any, Dict, List, Optional
 
 from httpx import AsyncClient, HTTPError
@@ -88,13 +89,18 @@ class WallhavenAPI(LoggerMixin):
             params["apikey"] = self.apik
 
         try:
+            start = time.perf_counter()
             response = await self.client.get("/search", params=params)
             response.raise_for_status()
-            self._lg.debug(f"All response {response.json()}")
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            payload = response.json()
+            items = payload.get("data", []) if isinstance(payload, dict) else []
+            self._lg.debug(f"All response {payload}")
             self._lg.debug(
-                f"Wallhaven returned {len(response.json().get('data', []))} items."
+                f"Wallhaven returned {len(items)} items in "
+                f"{elapsed_ms:.0f} ms ({len(response.content)} bytes)."
             )
-            return response.json().get("data", [])
+            return items
         except HTTPError as e:
             self._lg.error(f"Error by req to Wallhaven: {e}.")
             return []
@@ -112,8 +118,14 @@ class WallhavenAPI(LoggerMixin):
             Wallpaper dict including tags, or None on failure.
         """
         try:
+            start = time.perf_counter()
             response = await self.client.get(f"/w/{wallpaper_id}")
             response.raise_for_status()
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self._lg.debug(
+                f"Fetched wallpaper {wallpaper_id} in "
+                f"{elapsed_ms:.0f} ms ({len(response.content)} bytes)."
+            )
             return response.json().get("data")
         except HTTPError as e:
             self._lg.error(f"Failed to fetch wallpaper {wallpaper_id}: {e}.")
@@ -129,8 +141,14 @@ class WallhavenAPI(LoggerMixin):
             File content bytes, or None on failure.
         """
         try:
+            start = time.perf_counter()
             response = await self.client.get(url)
             response.raise_for_status()
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            self._lg.debug(
+                f"Downloaded image bytes in {elapsed_ms:.0f} ms "
+                f"({len(response.content)} bytes)."
+            )
             return response.content
         except HTTPError as e:
             self._lg.error(f"Failed to download {url}: {e}.")

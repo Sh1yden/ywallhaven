@@ -10,11 +10,13 @@ from typing import Callable
 from httpx import AsyncClient, HTTPError
 from packaging.version import InvalidVersion, Version
 
-from app.core import LoggerMixin, config
+from app.core import LoggerMixin, config, get_logger
 from app.core.version import __version__
 from app.schemas import AssetInfo, ReleaseInfo
 
 ProgressCallback = Callable[[int, int], None]
+
+_lg = get_logger()
 
 
 class UpdaterError(Exception):
@@ -93,7 +95,11 @@ class UpdaterService(LoggerMixin):
             self._lg.error(f"Failed to fetch releases from GitHub: {e}.")
             raise UpdaterError("GitHub API request failed") from e
 
-        for raw_release in response.json():
+        releases = response.json()
+        self._lg.debug(
+            f"Received {len(releases)} releases from GitHub."
+        )
+        for raw_release in releases:
             release = self._parse_release(raw_release)
             if release is None:
                 continue
@@ -118,8 +124,9 @@ class UpdaterService(LoggerMixin):
 
             if remote_version > self.current_version:
                 release.version = str(remote_version)
-                self._lg.debug(
-                    f"Update available: {remote_version} > {self.current_version}."
+                self._lg.info(
+                    f"Update available: {remote_version} > "
+                    f"{self.current_version}."
                 )
                 return release
 
@@ -149,6 +156,7 @@ class UpdaterService(LoggerMixin):
                 ],
             )
         except Exception as e:
+            _lg.debug(f"Skipping malformed release payload: {e}.")
             return None
 
     def find_asset(self, release: ReleaseInfo) -> AssetInfo | None:
@@ -193,12 +201,21 @@ class UpdaterService(LoggerMixin):
                 total = int(response.headers.get("content-length", 0))
 
                 with open(target, "wb") as f:
+                    last_percent = -1
                     async for chunk in response.aiter_bytes(self.CHUNK_SIZE):
                         f.write(chunk)
                         downloaded += len(chunk)
                         if progress is not None:
                             progress(downloaded, total)
-            self._lg.debug(f"Downloaded {downloaded} bytes.")
+                        if total:
+                            percent = downloaded * 100 // total
+                            if percent // 25 != last_percent // 25:
+                                last_percent = percent
+                                self._lg.debug(
+                                    f"Download progress: {percent}% "
+                                    f"({downloaded}/{total} bytes)."
+                                )
+            self._lg.info(f"Downloaded {downloaded} bytes -> {target}.")
             return target
         except HTTPError as e:
             self._lg.error(f"Download failed: {e}.")
@@ -223,18 +240,30 @@ class UpdaterService(LoggerMixin):
             True when the file matches the digest.
         """
         if not asset.digest.startswith("sha256:"):
+            _lg.debug(f"No sha256 digest for {asset.name}; skipping check.")
             return False
 
         digest = asset.digest.removeprefix("sha256:").strip().lower()
         sha256 = hashlib.sha256()
         try:
             with open(path, "rb") as f:
-                for chunk in iter(lambda: f.read(UpdaterService.CHUNK_SIZE), b""):
+                for chunk in iter(
+                    lambda: f.read(UpdaterService.CHUNK_SIZE), b""
+                ):
                     sha256.update(chunk)
-        except OSError:
+        except OSError as e:
+            _lg.error(f"Failed to read {path} for verification: {e}.")
             return False
 
-        return sha256.hexdigest() == digest
+        matches = sha256.hexdigest() == digest
+        if matches:
+            _lg.debug("Checksum verified (sha256 matches).")
+        else:
+            _lg.warning(
+                "Checksum mismatch for the downloaded executable "
+                f"(expected sha256:{digest})."
+            )
+        return matches
 
     # Applying -----------------------------------------------------
 

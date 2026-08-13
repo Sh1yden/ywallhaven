@@ -157,13 +157,23 @@ class JSONFormatter(logging.Formatter):
 
         filename = os.path.basename(record.pathname) if record.pathname else None
 
+        def app_version() -> str:
+            try:
+                from app.core.version import __version__
+
+                return __version__
+            except Exception:
+                return "unknown"
+
         log_entry = {
-            "timestamp": datetime.now().strftime("%H:%M:%S.%f")[:-3],
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
             "level": record.levelname,
             "filename": filename,
             "full_module": record.name,
             "def": record.funcName,
             "message": record.getMessage(),
+            "pid": os.getpid(),
+            "version": app_version(),
         }
 
         # Add traceback for errors

@@ -12,8 +12,10 @@ try:
     with open("config.json", "r", encoding="utf-8") as f:
         if json.load(f).get("MODE") == "prod":
             is_prod = True
-except Exception:
-    pass
+except Exception as e:
+    logging.getLogger("ywallhaven.main").debug(
+        f"Failed to read MODE from config.json: {e}."
+    )
 
 if is_prod or sys.stdout is None or sys.stderr is None:
     sys.stdout = open(os.devnull, "w")
@@ -22,6 +24,8 @@ if is_prod or sys.stdout is None or sys.stderr is None:
 from flet import run, AppView
 
 from app.core import get_logger, config
+from app.core.error_handling import install_exception_hooks
+from app.core.version import __version__
 from app.interface import flet_main
 
 _lg = get_logger()
@@ -72,8 +76,19 @@ def main():
     """Run the Flet app with the configured view and port."""
     try:
         _lg.info("Trying to run app...")
+        install_exception_hooks()
+
+        _lg.info(
+            f"Version: {__version__}, Python: {sys.version.split()[0]}, "
+            f"OS: {sys.platform}, Frozen: {getattr(sys, 'frozen', False)}."
+        )
+        _lg.info(f"Executable: {sys.executable}.")
+        _lg.info(f"Working dir: {Path.cwd()}, config file: {config._path}.")
+        _lg.info(
+            f"Mode: {config.data.MODE}, log level: {config.data.LOG_LVL}, "
+            f"port: {config.data.PORT}."
+        )
         _lg.debug(f"Config data is - {config.data}.")
-        _lg.debug(f"Config root path is - {config._path}")
         _lg.debug("Success ;)")
 
         run(

@@ -452,7 +452,8 @@ class LeftPanel(Container, LoggerMixin):
             config.data.APIK = api_key
             config.save()
 
-        self._lg.debug(f"Applied filters: {api_key!r}.")
+        masked = f"{api_key[:4]}***" if api_key else "<empty>"
+        self._lg.debug(f"Applied filters (api key: {masked}).")
         self._middle.apply_filters(api_key, self._collect_filters())
 
     def search_tag(self, name: str) -> None:
