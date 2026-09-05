@@ -23,9 +23,7 @@ if is_prod or sys.stdout is None or sys.stderr is None:
 
 from flet import run, AppView
 
-from app.core import get_logger, config
-from app.core.error_handling import install_exception_hooks
-from app.core.version import __version__
+from app.core import get_logger, config, install_exception_hooks, __version__
 from app.interface import flet_main
 
 _lg = get_logger()
