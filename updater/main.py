@@ -152,12 +152,47 @@ def main() -> int:
                      f"{WAIT_TIMEOUT_SECONDS:.0f}s; aborting.")
         return 2
 
+    # Log dst access before replace (helps diagnose WinError 5)
     try:
-        os.replace(args.src, args.dst)
-        logger.info(f"Replaced {args.dst}.")
-    except OSError as e:
-        logger.error(f"Failed to replace {args.dst}: {e}")
-        return 3
+        exists = args.dst.exists()
+        writable = os.access(args.dst, os.W_OK) if exists else os.access(args.dst.parent, os.W_OK)
+        logger.info(f"Dst check: exists={exists}, writable={writable}, dst={args.dst}")
+        if exists:
+            try:
+                st = args.dst.stat()
+                logger.info(f"Dst stat: size={st.st_size}, mode={oct(st.st_mode)}")
+            except Exception as ex:
+                logger.warning(f"Dst stat failed: {ex}")
+    except Exception as ex:
+        logger.warning(f"Dst check failed: {ex}")
+
+    # Retry loop for WinError 5 (access denied) — file may be locked briefly
+    last_exc = None
+    for attempt in range(3):
+        try:
+            os.replace(args.src, args.dst)
+            logger.info(f"Replaced {args.dst}.")
+            break
+        except OSError as e:
+            last_exc = e
+            logger.warning(f"Replace attempt {attempt+1}/3 failed: {e}")
+            # Try to make dst writable on access denied
+            if getattr(e, "winerror", None) == 5:
+                try:
+                    if args.dst.exists():
+                        os.chmod(args.dst, 0o777)
+                        logger.info(f"chmod 777 on {args.dst}")
+                except Exception as ce:
+                    logger.warning(f"chmod failed: {ce}")
+            if attempt < 2:
+                time.sleep(0.7)
+                continue
+            logger.error(f"Failed to replace {args.dst}: {e}")
+            return 3
+    else:
+        if last_exc is not None:
+            logger.error(f"Failed to replace {args.dst}: {last_exc}")
+            return 3
 
     if args.restart:
         _restart(args.dst, logger)

@@ -43,6 +43,12 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.3] - 2026-09-06
+
+### Исправлено
+
+- Апдейтер `WinError 5 Отказано в доступе` при `os.replace` в `C:\Programs\...` (`updater/main.py:155`, `ywallhaven-updater.spec`): `C:\Programs` требует UAC, helper запускался без повышения. Добавлен retry 3× с `chmod 777` + `sleep 0.7` + лог `exists/writable/stat` до `replace`, и `uac_admin=True` в `ywallhaven-updater.spec` (манифест `requireAdministrator`).
+
 ## [0.8.2] - 2026-09-06
 
 ### Исправлено
@@ -325,7 +331,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...v0.8.0
