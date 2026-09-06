@@ -8,5 +8,9 @@ He default create in first run app.
     "APIK": "YOUR_WALLHAVEN_API_KEY",
     "CHECK_UPDATES": true,
     "CHECK_PRERELEASES": false,
-    "THEME": "dark or light"
+    "THEME": "dark_default"
 }
+
+// THEME: id from registry. Builtin: dark_default, light_default, midnight, forest, ocean, sunset, arctic, kanagawa_wave, kanagawa_lotus
+// Custom: place themes/*.json with {id, name, mode, seed, colors?} — see themes/README.md
+// Legacy "dark"/"light" auto-migrates to dark_default/light_default

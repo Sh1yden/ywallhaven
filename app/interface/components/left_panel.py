@@ -8,9 +8,11 @@ from flet import (
     Checkbox,
     Colors,
     Container,
+    Divider,
     Dropdown,
     DropdownOption,
     FilledButton,
+    Icon,
     Icons,
     ListView,
     Row,
@@ -82,8 +84,9 @@ class LeftPanel(Container, LoggerMixin):
         super().__init__()
         self._middle = middle_panel
         self.expand = 1
-        self.padding = 10
-        self.bgcolor = Colors.DEEP_PURPLE_500
+        self.padding = 14
+        self.bgcolor = Colors.SURFACE_CONTAINER
+        self.border_radius = 16
         self.content = self._build_panel()
 
     def _build_panel(self) -> ListView:
@@ -97,6 +100,9 @@ class LeftPanel(Container, LoggerMixin):
             hint_text="Keywords, tags, @user...",
             icon=Icons.SEARCH,
             expand=True,
+            filled=True,
+            bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+            border_radius=12,
             on_change=self._handle_search_input,
             on_submit=lambda e: self._apply(),
         )
@@ -104,6 +110,8 @@ class LeftPanel(Container, LoggerMixin):
         self._apply_button = FilledButton(
             content="Apply",
             icon=Icons.SEARCH,
+            style=None,
+            height=48,
             on_click=lambda e: self._apply(),
         )
 
@@ -201,24 +209,37 @@ class LeftPanel(Container, LoggerMixin):
             ],
         )
 
+        # C3: section helper styling
+        def _section(title: str, icon: str):  # type: ignore[no-untyped-def]
+            return Row(
+                spacing=6,
+                controls=[
+                    Icon(icon, size=16, color=Colors.PRIMARY),
+                    Text(title, size=13, weight="w700", color=Colors.ON_SURFACE),
+                ],
+            )
+
         return ListView(
             expand=True,
-            spacing=10,
+            spacing=12,
             controls=[
-                Text("Search", size=14, weight="w700"),
+                _section("Search", Icons.SEARCH),
                 Row(
                     spacing=8,
                     controls=[self._search_field, self._apply_button],
                 ),
-                Text("Categories", size=14, weight="w700"),
+                Divider(height=1, color=Colors.OUTLINE_VARIANT),
+                _section("Categories", Icons.CATEGORY),
                 self._general_cb,
                 self._anime_cb,
                 self._people_cb,
-                Text("Purity", size=14, weight="w700"),
+                Divider(height=1, color=Colors.OUTLINE_VARIANT),
+                _section("Purity", Icons.SHIELD),
                 self._sfw_cb,
                 self._sketchy_cb,
                 self._nsfw_cb,
-                Text("Options", size=14, weight="w700"),
+                Divider(height=1, color=Colors.OUTLINE_VARIANT),
+                _section("Options", Icons.TUNE),
                 self._sorting_dd,
                 self._order_dd,
                 self._atleast_dd,

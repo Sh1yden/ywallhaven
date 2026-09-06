@@ -217,6 +217,12 @@ pyrightconfig.json
 # My config
 config.json
 
+# User themes (keep examples, ignore personal)
+themes/user_*.json
+themes/custom_*.json
+!themes/example_*.json
+!themes/README.md
+
 # Generated at build time
 app/core/_version.py
 build/version_info.txt

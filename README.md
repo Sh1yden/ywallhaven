@@ -43,6 +43,21 @@ uv run run.py
 
 При первом запуске в корне проекта автоматически создастся `config.json` со значениями по умолчанию (см. [`config.example.json`](config.example.json)). Поле `APIK` — необязательное, ключ Wallhaven API нужен только для NSFW-контента и снятия ограничений на частоту запросов.
 
+### 🎨 Темы
+
+- **Встроенные (9):** `dark_default`, `light_default`, `midnight`, `forest`, `ocean`, `sunset`, `arctic`, `kanagawa_wave` (dark, из `rebelot/kanagawa.nvim`), `kanagawa_lotus` (light). Выбор в Settings → Theme.
+- **Свои:** кинь `themes/my_theme.json` рядом с `config.json` или нажми `Import` в настройках. Формат:
+  ```json
+  {
+    "id": "my_ocean",
+    "name": "My Ocean",
+    "mode": "dark",
+    "seed": "#0066CC",
+    "colors": { "primary": "#0066CC", "surface": "#101418" }
+  }
+  ```
+  `seed` обязателен (генерирует M3 палитру), `colors` опционально перетирает любые токены `ColorScheme` (см. `themes/README.md` и `app/interface/themes/schema.py`). Легаси `"dark"/"light"` в `config.json` мигрируют на `dark_default/light_default`.
+
 ### 📦 Сборка в exe (Windows)
 
 Основной путь — CI: пушится тег вида `vX.Y.Z`, GitHub Actions на
@@ -86,11 +101,13 @@ uv run python scripts/build.py
 - `app` - папка всего приложения.
   - `core` - ядро проекта: `logger` и менеджер конфигурации (`config.py`).
   - `interface` - весь UI на `Flet`.
-    - `components` - панели интерфейса: `left_panel.py` (поиск, фильтры, API-ключ), `middle_panel.py` (сетка результатов), `right_panel.py` (превью, свойства, скачивание).
-    - `flet_app.py` - сборка трёх панелей в единый layout.
+    - `components` - панели интерфейса: `left_panel.py` (поиск, фильтры), `middle_panel.py` (сетка), `right_panel.py` (превью), `settings.py` (настройки + темы).
+    - `themes` - `schema.py`/`builtin.py`/`loader.py` — реестр тем, Kanagawa из `rebelot/kanagawa.nvim`, гибрид `seed+colors`.
+    - `flet_app.py` - сборка трёх панелей в единый layout (C3 редизайн: header Card, responsive grid).
   - `schemas` - `pydantic`-схемы конфигурации и данных Wallhaven.
   - `service` - `wallhaven_api.py`, клиент для работы с Wallhaven API.
   - `main.py` - точка входа: режим приложения, логирование, запуск Flet.
+- `themes/` - пользовательские темы `*.json` + примеры `example_*.json` (см. `themes/README.md`).
 - `run.py` - точка запуска/сборки приложения.
 - `config.example.json` - пример конфигурации.
 - `pyproject.toml` и `uv.lock` - конфигурация проекта и зависимости.

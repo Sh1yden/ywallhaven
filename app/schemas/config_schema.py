@@ -20,8 +20,8 @@ class ConfigSchema(BaseModel):
         description="Offer updates from GitHub pre-releases",
     )
     THEME: str = Field(
-        default="dark",
-        description="Interface theme, dark or light",
+        default="dark_default",
+        description="Theme id from registry (e.g. dark_default, kanagawa_wave)",
     )
 
     model_config = SettingsConfigDict(extra="allow", case_sensitive=True)

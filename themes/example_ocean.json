@@ -1,0 +1,12 @@
+{
+    "id": "example_ocean",
+    "name": "Example Ocean",
+    "mode": "dark",
+    "seed": "#0066CC",
+    "colors": {
+        "primary": "#0066CC",
+        "surface": "#101418",
+        "surface_container": "#1A1F24",
+        "surface_container_high": "#222830"
+    }
+}

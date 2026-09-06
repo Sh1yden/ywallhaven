@@ -12,6 +12,9 @@ from flet import (
     Image,
     BoxFit,
     OnScrollEvent,
+    Stack,
+    Text,
+    Alignment,
 )
 from app.core import LoggerMixin
 from app.core.resources import register
@@ -39,6 +42,9 @@ class MiddlePanel(GridView, LoggerMixin):
         register(self.api_client.close)
         self.expand = 3
         self.runs_count = 4
+        self.spacing = 12
+        self.run_spacing = 12
+        self.padding = 4
         self.controls = []
         self.state_page = 1
         self.has_more = True
@@ -161,6 +167,8 @@ class MiddlePanel(GridView, LoggerMixin):
     ) -> GestureDetector:
         """Build a thumbnail tile for a wallpaper.
 
+        C3: Card-like tile with rounded corners, shadow and info overlay.
+
         Args:
             wallpaper: Wallpaper dict from the API.
             index: Index of the wallpaper in the local cache.
@@ -168,17 +176,45 @@ class MiddlePanel(GridView, LoggerMixin):
         Returns:
             Gesture detector with single and double click handlers.
         """
+        # resolution label for overlay (if available)
+        res = wallpaper.get("resolution") or wallpaper.get("dimension") or ""
+        # Use Stack to overlay resolution chip when hover? Keep simple.
+        img = Image(
+            src=wallpaper["thumbs"]["small"],
+            fit=BoxFit.COVER,
+            border_radius=12,
+        )
         return GestureDetector(
             data=index,
             on_tap=self.handle_image_click,
             on_double_tap=self.handle_image_double_click,
             content=Container(
-                border_radius=8,
-                bgcolor=Colors.GREY_500,
+                border_radius=12,
+                bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
                 clip_behavior=ClipBehavior.HARD_EDGE,
-                content=Image(
-                    src=wallpaper["thumbs"]["small"],
-                    fit=BoxFit.COVER,
+                shadow=None,
+                content=Stack(
+                    controls=[
+                        img,
+                        Container(
+                            alignment=Alignment.BOTTOM_RIGHT,
+                            padding=4,
+                            content=Container(
+                                padding=4,
+                                border_radius=8,
+                                bgcolor=Colors.BLACK54,
+                                visible=bool(res),
+                                content=Text(
+                                    str(res),
+                                    size=10,
+                                    color=Colors.WHITE,
+                                    weight="w500",
+                                ),
+                            )
+                            if res
+                            else None,
+                        ),
+                    ]
                 ),
             ),
         )

@@ -32,10 +32,37 @@
 - [x] Разблокировка NSFW/Sketchy сразу после ввода ключа
   в настройках, без перезапуска.
 - [x] Теги у NSFW-обоев (передача `apikey` в запрос деталей).
-- [ ] Сделать красивое оформление приложения
-    - [ ] Система заготовленных тем
-    - [ ] Система собвственных тем(пользовательских) в определённом формате
-- [ ] Улучшить внешний вид приложения
+- [x] Сделать красивое оформление приложения
+    - [x] Система заготовленных тем (9 builtin: dark_default, light_default, midnight, forest, ocean, sunset, arctic, kanagawa_wave, kanagawa_lotus из rebelot/kanagawa.nvim)
+    - [x] Система собственных тем (пользовательских) в определённом формате (themes/*.json, гибрид seed+colors, import через UI)
+- [x] Улучшить внешний вид приложения (C3 редизайн: header Card, surface tokens, responsive grid, skeleton, empty states, chips)
+- [ ] Изменить иконку собранного exe на свою
+- [ ] Изменить иконку запущенного приложения со стандартной на свою
+- [ ] Добавить закрытие всплывающих меню по клику вне его(исключительно меню скачки картинки, когда выбираешь его разрешения)
+
+## [0.8.0] - 2026-09-06
+
+### Добавлено
+
+- Система заготовленных тем: 9 builtin — `dark_default`, `light_default`, `midnight`, `forest`, `ocean`, `sunset`, `arctic`, `kanagawa_wave` (dark), `kanagawa_lotus` (light) из `rebelot/kanagawa.nvim` (`lua/kanagawa/colors.lua`, `themes.lua`).
+- Система пользовательских тем: `themes/*.json` гибрид `seed` + `colors` (до 40 ключей `ColorScheme` в snake_case, валидация hex), примеры `themes/example_ocean.json`, `themes/example_light_paper.json`, дока `themes/README.md`.
+- Модуль `app/interface/themes` (`schema.py`, `builtin.py`, `loader.py`, `__init__.py`): реестр `list_themes`/`get_theme`/`apply_theme`/`reload_user_themes`, `ThemeDefinition.to_flet_theme()` (`Theme(color_scheme_seed)` / `Theme(color_scheme=ColorScheme)`).
+- Импорт тем через UI: `SettingsPanel` — кнопка `Import` + `FilePicker` (валидация `ThemeDefinition`, копирование в `themes/<id>.json`, `SnackBar`, обновление `Dropdown`).
+- Документация тем в `README.md` (секция 🎨 Темы) и `config.example.json` (`THEME: dark_default` + список 9 + legacy note).
+- Тесты `tests/test_themes.py` (14): builtin valid, Kanagawa wave/dark lotus/light, hex/id/color валидация, `to_flet_theme` seed/hybrid/auto, loader ignore/duplicate, registry legacy, `apply_theme` mode.
+
+### Изменено
+
+- `ConfigSchema.THEME` default `dark` → `dark_default` (`app/schemas/config_schema.py:22`); миграция `dark/light` → `dark_default/light_default` в `app/core/config.py:40` и `update()`.
+- `flet_app.py` — применение темы через `apply_theme(page, THEME)` + `page.theme`/`dark_theme` + `theme_mode`, header → `SurfaceContainer` Card (16, чип темы, `Divider`), обёртки панелей `Border OUTLINE_VARIANT`, `middle` `SURFACE_CONTAINER_LOW`, responsive `on_resized` (`<900:2/<1200:3/else 4`).
+- `left_panel.py` / `right_panel.py` / `middle_panel.py` — `DEEP_PURPLE_500/GREY_500` → `SURFACE_CONTAINER*` токены, секции `Icon PRIMARY + Divider`, `TextField filled`, `FilledButton 48`, тайлы `borderRadius 12 + чип resolution`, empty state с иконкой.
+- `settings.py` — `Dropdown` теперь все темы (builtin+user, sorted), `Import` рядом с темой, `_sync_from_config` → `reload_user_themes`.
+- `.gitignore` — `themes/user_*.json`, `custom_*.json` игнор, `!example_*.json`.
+
+### Исправлено
+
+- `ThemeDefinition` лимит `colors` 20→40, `surface_variant` удалён (нет в Flet 0.86 `ColorScheme`), `sorted(glob)` для детерминизма, `FilePickerResultEvent` импорт.
+- `loader._candidate_theme_dirs` порядок `cwd` > `repo` > `MEIPASS` > `exe` для tmp_path в тестах.
 
 ## [0.7.3] - 2026-08-14
 
@@ -275,7 +302,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.0...v0.7.1

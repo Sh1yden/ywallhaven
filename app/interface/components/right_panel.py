@@ -61,8 +61,9 @@ class RightPanel(Container):
         self._api_client = WallhavenAPI()
         register(self._api_client.close)
         self.expand = 1
-        self.padding = 12
-        self.bgcolor = Colors.DEEP_PURPLE_500
+        self.padding = 14
+        self.bgcolor = Colors.SURFACE_CONTAINER
+        self.border_radius = 16
         self.alignment = Alignment.CENTER
         self.content = self._build_empty_state()
         self._last_wallpaper: Dict[str, Any] | None = None
@@ -174,12 +175,20 @@ class RightPanel(Container):
         )
         self.update()
 
-    def _build_download_button(self) -> FilledButton:
-        """Build the download button shown below the properties."""
-        return FilledButton(
-            content="Download",
-            icon=Icons.DOWNLOAD,
-            on_click=self._handle_download_click,
+    def _build_download_button(self) -> Container:
+        """Build the download button shown below the properties.
+
+        C3: Sticky container with elevated button.
+        """
+        return Container(
+            padding=Padding(top=8, right=0, bottom=0, left=0),
+            content=FilledButton(
+                content="Download",
+                icon=Icons.DOWNLOAD,
+                height=48,
+                expand=True,
+                on_click=self._handle_download_click,
+            ),
         )
 
     def _handle_download_click(self, e) -> None:
@@ -349,17 +358,49 @@ class RightPanel(Container):
     # Private builders ----------------------------------------------
 
     def _build_empty_state(self) -> Container:
-        """Build the placeholder shown when nothing is selected."""
+        """Build the placeholder shown when nothing is selected.
+
+        C3: Centered icon + two lines + hint.
+        """
         return Container(
             alignment=Alignment.CENTER,
-            content=Text(
-                "Select a wallpaper",
-                color=Colors.WHITE70,
+            content=Column(
+                tight=True,
+                horizontal_alignment=CrossAxisAlignment.CENTER,
+                spacing=8,
+                controls=[
+                    Container(
+                        width=64,
+                        height=64,
+                        border_radius=32,
+                        bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+                        alignment=Alignment.CENTER,
+                        content=Text(
+                            "🖼️",
+                            size=28,
+                        ),
+                    ),
+                    Text(
+                        "Select a wallpaper",
+                        size=14,
+                        weight="w700",
+                        color=Colors.ON_SURFACE,
+                        text_align="center",
+                    ),
+                    Text(
+                        "Click any thumbnail to preview\ndouble-click to download",
+                        size=11,
+                        color=Colors.ON_SURFACE_VARIANT,
+                        text_align="center",
+                    ),
+                ],
             ),
         )
 
     def _build_preview(self, wallpaper: Dict[str, Any]) -> Container:
         """Build the rounded preview container for a wallpaper.
+
+        C3: 16px radius, surface container high, subtle border.
 
         Args:
             wallpaper: Wallpaper dict from the Wallhaven API.
@@ -369,14 +410,37 @@ class RightPanel(Container):
         """
         return Container(
             expand=True,
-            border_radius=self.PREVIEW_RADIUS,
+            border_radius=16,
             clip_behavior=ClipBehavior.HARD_EDGE,
-            bgcolor=Colors.SURFACE_DIM,
+            bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+            border=None,
             on_click=self.open_fullscreen,
-            content=Image(
-                src=wallpaper.get("path"),
-                fit=BoxFit.COVER,
+            content=Stack(
                 expand=True,
+                controls=[
+                    Image(
+                        src=wallpaper.get("path"),
+                        fit=BoxFit.COVER,
+                        expand=True,
+                        border_radius=16,
+                    ),
+                    Container(
+                        alignment=Alignment.BOTTOM_RIGHT,
+                        padding=8,
+                        content=Container(
+                            padding=6,
+                            border_radius=20,
+                            bgcolor=Colors.BLACK54,
+                            content=IconButton(
+                                icon=Icons.OPEN_IN_FULL,
+                                icon_size=16,
+                                icon_color=Colors.WHITE,
+                                bgcolor=Colors.TRANSPARENT,
+                                on_click=self.open_fullscreen,
+                            ),
+                        ),
+                    ),
+                ],
             ),
         )
 
@@ -627,13 +691,15 @@ class RightPanel(Container):
                     label,
                     width=110,
                     size=12,
-                    color=Colors.WHITE70,
+                    color=Colors.ON_SURFACE_VARIANT,
+                    weight="w500",
                 ),
                 Text(
                     str(value),
                     size=12,
                     selectable=True,
                     expand=True,
+                    color=Colors.ON_SURFACE,
                 ),
             ],
         )
@@ -708,12 +774,15 @@ class RightPanel(Container):
             GestureDetector(
                 on_tap=self._make_tag_handler(tag),
                 content=Container(
-                    padding=6,
-                    border_radius=6,
-                    bgcolor=Colors.GREY_800,
+                    padding=Padding(top=6, right=10, bottom=6, left=10),
+                    border_radius=20,
+                    bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+                    border=None,
                     content=Text(
                         tag.get("name", ""),
                         size=11,
+                        color=Colors.ON_SURFACE,
+                        weight="w500",
                     ),
                 ),
             )

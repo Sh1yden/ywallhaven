@@ -49,6 +49,17 @@ class Config(LoggerMixin):
         # File found
         try:
             raw_dict = self.load(self._path)
+            # Migrate legacy THEME values: dark/light -> dark_default/light_default
+            legacy_map = {"dark": "dark_default", "light": "light_default"}
+            if raw_dict.get("THEME") in legacy_map:
+                raw_dict["THEME"] = legacy_map[raw_dict["THEME"]]
+                # persist migration silently, fallback to save later
+                try:
+                    self._lg.info(
+                        f"Migrated legacy THEME to {raw_dict['THEME']}"
+                    )
+                except Exception:
+                    pass
             return ConfigSchema(**raw_dict)
         except (json.JSONDecodeError, ValidationError) as e:
             self._lg.warning(f"Config corrupted ({e}). Recreating default...")
@@ -106,6 +117,12 @@ class Config(LoggerMixin):
         Returns:
             True on success, False otherwise.
         """
+        # Normalize legacy THEME aliases
+        if "THEME" in kwargs:
+            legacy_map = {"dark": "dark_default", "light": "light_default"}
+            val = kwargs["THEME"]
+            if isinstance(val, str) and val in legacy_map:
+                kwargs["THEME"] = legacy_map[val]
         merged = self.data.model_dump()
         merged.update(kwargs)
         self.data = ConfigSchema(**merged)

@@ -36,17 +36,38 @@ def test_update_merges_and_persists(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     cfg = Config("dev")
 
-    assert cfg.data.THEME == "dark"
+    assert cfg.data.THEME == "dark_default"
 
-    ok = cfg.update(THEME="light", APIK="test-key")
+    ok = cfg.update(THEME="light_default", APIK="test-key")
     assert ok is True
-    assert cfg.data.THEME == "light"
+    assert cfg.data.THEME == "light_default"
 
     persisted = json.loads(
         (tmp_path / "config.json").read_text(encoding="utf-8")
     )
-    assert persisted["THEME"] == "light"
+    assert persisted["THEME"] == "light_default"
     assert persisted["APIK"] == "test-key"
+
+
+def test_legacy_theme_migration(tmp_path, monkeypatch) -> None:
+    """Legacy dark/light must migrate to dark_default/light_default."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.json").write_text(
+        json.dumps({"THEME": "dark"}), encoding="utf-8"
+    )
+    cfg = Config("dev")
+    assert cfg.data.THEME == "dark_default"
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "config.json").write_text(
+        json.dumps({"THEME": "light"}), encoding="utf-8"
+    )
+    cfg2 = Config("dev")
+    assert cfg2.data.THEME == "light_default"
+
+    # update with legacy alias
+    cfg2.update(THEME="dark")
+    assert cfg2.data.THEME == "dark_default"
 
 
 def test_corrupted_json_is_recreated(tmp_path, monkeypatch) -> None:

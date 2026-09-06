@@ -2,6 +2,10 @@
 
 from typing import Callable
 
+import json
+import shutil
+from pathlib import Path
+
 from flet import (
     Alignment,
     Blur,
@@ -12,7 +16,10 @@ from flet import (
     CrossAxisAlignment,
     Dropdown,
     DropdownOption,
+    FilePicker,
+    FilePickerFileType,
     FilledButton,
+    FilledTonalButton,
     IconButton,
     Icons,
     MainAxisAlignment,
@@ -25,7 +32,6 @@ from flet import (
     Switch,
     Text,
     TextField,
-    ThemeMode,
 )
 
 from app.core import config, get_logger
@@ -55,7 +61,36 @@ class SettingsPanel(Container):
         self._on_api_key_change = on_api_key_change
         self.expand = True
         self.visible = False
+        self._theme_picker = FilePicker(on_result=self._on_theme_import)
         self.content = self._build_overlay()
+
+    def did_mount(self) -> None:
+        """Attach file picker to page overlay."""
+        try:
+            super().did_mount()
+        except Exception:
+            pass
+        try:
+            if self.page and self._theme_picker not in self.page.overlay:
+                self.page.overlay.append(self._theme_picker)
+                self.page.update()
+        except Exception as e:
+            _lg.debug(f"Failed to mount theme picker: {e}")
+
+    def will_unmount(self) -> None:
+        """Detach file picker."""
+        try:
+            super().will_unmount()
+        except Exception:
+            pass
+        try:
+            if (
+                self.page
+                and self._theme_picker in self.page.overlay
+            ):
+                self.page.overlay.remove(self._theme_picker)
+        except Exception:
+            pass
 
     # Public API ----------------------------------------------------
 
@@ -155,10 +190,13 @@ class SettingsPanel(Container):
 
         if new_theme != old_theme:
             _lg.info(f"Applying theme {old_theme} -> {new_theme}.")
-            self.page.theme_mode = (
-                ThemeMode.LIGHT if new_theme == "light" else ThemeMode.DARK
-            )
-            self.page.update()
+            try:
+                from app.interface.themes import apply_theme
+
+                apply_theme(self.page, new_theme)
+            except Exception as e:
+                _lg.warning(f"Failed to apply theme {new_theme}: {e}")
+                self.page.update()
 
         if self._on_api_key_change is not None and api_key_changed:
             _lg.debug("Propagating the new API key to the left panel.")
@@ -181,6 +219,14 @@ class SettingsPanel(Container):
 
     def _sync_from_config(self) -> None:
         """Refresh the panel fields from the current config values."""
+        # Reload user themes so dropdown shows fresh imports/files
+        try:
+            from app.interface.themes import reload_user_themes
+
+            reload_user_themes()
+            self._refresh_theme_options()
+        except Exception as e:
+            _lg.debug(f"Failed to reload themes: {e}")
         data = config.data
         self._theme_dd.value = data.THEME
         self._api_key_field.value = data.APIK
@@ -189,6 +235,137 @@ class SettingsPanel(Container):
         self._port_field.value = str(data.PORT)
         self._check_updates_sw.value = data.CHECK_UPDATES
         self._prereleases_sw.value = data.CHECK_PRERELEASES
+
+    def _refresh_theme_options(self) -> None:
+        """Rebuild theme dropdown options from registry."""
+        try:
+            from app.interface.themes import list_themes
+
+            themes = list_themes()
+            # Sort: builtin first alphabetically, then user
+            def _sort_key(item):  # type: ignore[no-untyped-def]
+                _id, td = item
+                return (0 if td.is_builtin else 1, td.name.lower())
+
+            sorted_items = sorted(themes.items(), key=_sort_key)
+            self._theme_dd.options = [
+                DropdownOption(key=tid, text=td.name)
+                for tid, td in sorted_items
+            ]
+            if hasattr(self, "_theme_dd"):
+                try:
+                    self._theme_dd.update()
+                except Exception:
+                    pass
+        except Exception as e:
+            _lg.debug(f"Failed to refresh theme options: {e}")
+
+    def _on_import_theme(self, e) -> None:
+        """Open file picker for theme JSON."""
+        try:
+            self._theme_picker.pick_files(
+                dialog_title="Import theme JSON",
+                allowed_extensions=["json"],
+                file_type=FilePickerFileType.CUSTOM,
+                allow_multiple=False,
+            )
+        except Exception as ex:
+            _lg.warning(f"Import picker failed: {ex}")
+            self.page.show_dialog(
+                SnackBar(
+                    content=Text(f"Import failed: {ex}"),
+                    behavior=SnackBarBehavior.FLOATING,
+                    bgcolor=Colors.RED,
+                )
+            )
+
+    def _on_theme_import(self, e) -> None:  # type: ignore[no-untyped-def]
+        """Handle picked theme file: validate and copy to themes/."""
+        if not e.files:
+            return
+        picked = e.files[0]
+        src_path = getattr(picked, "path", None)
+        if not src_path:
+            self.page.show_dialog(
+                SnackBar(
+                    content=Text("No file selected"),
+                    behavior=SnackBarBehavior.FLOATING,
+                    bgcolor=Colors.RED,
+                )
+            )
+            return
+        src = Path(src_path)
+        try:
+            raw = json.loads(src.read_text(encoding="utf-8"))
+        except Exception as ex:
+            _lg.warning(f"Theme import invalid JSON {src}: {ex}")
+            self.page.show_dialog(
+                SnackBar(
+                    content=Text("Invalid JSON"),
+                    behavior=SnackBarBehavior.FLOATING,
+                    bgcolor=Colors.RED,
+                )
+            )
+            return
+
+        # Validate via ThemeDefinition
+        try:
+            from app.interface.themes.schema import ThemeDefinition
+            from app.interface.themes.loader import _theme_dir
+
+            candidates = []
+            if isinstance(raw, dict) and "themes" in raw:
+                candidates = raw["themes"]
+            elif isinstance(raw, list):
+                candidates = raw
+            else:
+                candidates = [raw]
+
+            validated = []
+            for item in candidates:
+                td = ThemeDefinition.model_validate(item)
+                validated.append(td)
+
+            # copy to themes dir
+            tdir = _theme_dir()
+            if tdir is None:
+                raise RuntimeError("No themes dir")
+            tdir.mkdir(parents=True, exist_ok=True)
+            for td in validated:
+                dest = tdir / f"{td.id}.json"
+                # write single theme file
+                dest.write_text(
+                    td.model_dump_json(indent=4), encoding="utf-8"
+                )
+                _lg.info(f"Imported theme '{td.id}' -> {dest}")
+
+            # reload and refresh dropdown
+            from app.interface.themes import reload_user_themes
+
+            reload_user_themes()
+            self._refresh_theme_options()
+            if validated:
+                self._theme_dd.value = validated[-1].id
+                self._theme_dd.update()
+
+            self.page.show_dialog(
+                SnackBar(
+                    content=Text(
+                        f"Imported {len(validated)} theme(s)"
+                    ),
+                    behavior=SnackBarBehavior.FLOATING,
+                    bgcolor=Colors.GREEN,
+                )
+            )
+        except Exception as ex:
+            _lg.warning(f"Theme import failed: {ex}")
+            self.page.show_dialog(
+                SnackBar(
+                    content=Text(f"Import failed: {ex}"),
+                    behavior=SnackBarBehavior.FLOATING,
+                    bgcolor=Colors.RED,
+                )
+            )
 
     def _show_saved_notice(self) -> None:
         """Show the saved confirmation snack."""
@@ -264,6 +441,11 @@ class SettingsPanel(Container):
                                     spacing=8,
                                     controls=[
                                         self._build_theme_dd(),
+                                        FilledTonalButton(
+                                            content="Import",
+                                            icon=Icons.FOLDER_OPEN,
+                                            on_click=self._on_import_theme,
+                                        ),
                                         self._build_mode_dd(),
                                     ],
                                 ),
@@ -320,16 +502,34 @@ FilledButton(
         """Build the theme selector dropdown.
 
         Returns:
-            Dropdown with the dark and light theme options.
+            Dropdown with all builtin + user themes.
         """
+        # Lazy import to avoid circular
+        try:
+            from app.interface.themes import list_themes
+
+            themes = list_themes()
+            sorted_items = sorted(
+                themes.items(),
+                key=lambda kv: (
+                    0 if kv[1].is_builtin else 1,
+                    kv[1].name.lower(),
+                ),
+            )
+            options = [
+                DropdownOption(key=tid, text=td.name)
+                for tid, td in sorted_items
+            ]
+        except Exception:
+            options = [
+                DropdownOption(key="dark_default", text="Dark"),
+                DropdownOption(key="light_default", text="Light"),
+            ]
         self._theme_dd = Dropdown(
             label="Theme",
             expand=True,
             value=config.data.THEME,
-            options=[
-                DropdownOption(key="dark", text="Dark"),
-                DropdownOption(key="light", text="Light"),
-            ],
+            options=options,
         )
         return self._theme_dd
 

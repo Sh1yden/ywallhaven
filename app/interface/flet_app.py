@@ -7,9 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from flet import (
+    Border,
+    Card,
+    ClipBehavior,
     Colors,
     Column,
     Container,
+    Divider,
     FilePicker,
     FilePickerFileType,
     Icon,
@@ -22,7 +26,7 @@ from flet import (
     SnackBar,
     SnackBarBehavior,
     Text,
-    ThemeMode,
+    VerticalDivider,
 )
 from PIL import Image as PILImage
 
@@ -36,6 +40,7 @@ from app.interface.components import (
     SettingsPanel,
 )
 from app.interface.components.update_dialog import check_and_offer
+from app.interface.themes import apply_theme, get_theme, list_themes
 
 _lg = get_logger()
 
@@ -148,10 +153,20 @@ async def _build_ui(page: Page) -> None:
     _lg.debug(f"Building UI for session...")
 
     page.title = "ywallhaven"
-    page.padding = 10
-    page.theme_mode = (
-        ThemeMode.LIGHT if config.data.THEME == "light" else ThemeMode.DARK
-    )
+    page.padding = 12
+    page.bgcolor = Colors.SURFACE
+    # Apply theme from registry (supports builtin + user themes)
+    try:
+        applied = apply_theme(page, config.data.THEME)
+        _lg.debug(
+            f"Theme applied: {applied.id} mode={applied.mode} seed={applied.seed}"
+        )
+    except Exception as e:
+        _lg.warning(f"Failed to apply theme {config.data.THEME}: {e}")
+        try:
+            apply_theme(page, "dark_default")
+        except Exception:
+            pass
 
     def on_page_error(e) -> None:
         """Log any unhandled exception happening on the page.
@@ -175,6 +190,7 @@ async def _build_ui(page: Page) -> None:
     page.on_disconnect = on_disconnect
 
     file_picker = FilePicker()
+    page.overlay.append(file_picker)
 
     async def save_wallpaper(
         url: str,
@@ -288,53 +304,121 @@ async def _build_ui(page: Page) -> None:
 
     icon_bytes = _app_icon_bytes()
     logo = (
-        Image(src=icon_bytes, width=28, height=28)
+        Image(src=icon_bytes, width=32, height=32)
         if icon_bytes is not None
-        else Icon(Icons.WALLPAPER, size=24)
+        else Icon(Icons.WALLPAPER, size=26)
     )
-    header = Row(
-        spacing=8,
-        controls=[
-            logo,
-            Text(
-                "ywallhaven",
-                size=16,
-                weight="w700",
-            ),
-            IconButton(
-                icon=Icons.SETTINGS,
-                icon_size=22,
-                tooltip="Settings",
-                on_click=settings_panel.toggle_settings,
-            ),
-        ],
+    current_theme = get_theme(config.data.THEME)
+    theme_label = current_theme.name if current_theme else config.data.THEME
+
+    # C3: polished header as surface container card + divider
+    header = Container(
+        bgcolor=Colors.SURFACE_CONTAINER,
+        border_radius=16,
+        padding=12,
+        content=Row(
+            spacing=12,
+            vertical_alignment="center",
+            controls=[
+                logo,
+                Text(
+                    "ywallhaven",
+                    size=20,
+                    weight="w700",
+                ),
+                Container(
+                    padding=6,
+                    border_radius=20,
+                    bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+                    content=Text(
+                        theme_label,
+                        size=11,
+                        weight="w500",
+                        color=Colors.ON_SURFACE_VARIANT,
+                    ),
+                ),
+                Container(expand=True, content=Text("")),
+                IconButton(
+                    icon=Icons.SETTINGS,
+                    icon_size=22,
+                    tooltip="Settings",
+                    style=None,
+                    bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+                    on_click=settings_panel.toggle_settings,
+                ),
+            ],
+        ),
     )
+
+    # Wrap side panels in Card-like containers for C3 hierarchy
+    left_wrapped = Container(
+        expand=1,
+        border=Border.all(1, Colors.OUTLINE_VARIANT),
+        border_radius=16,
+        clip_behavior=ClipBehavior.HARD_EDGE,
+        content=left_panel,
+    )
+    middle_wrapped = Container(
+        expand=3,
+        border_radius=16,
+        clip_behavior=ClipBehavior.HARD_EDGE,
+        bgcolor=Colors.SURFACE_CONTAINER_LOW,
+        padding=8,
+        content=middle_panel,
+    )
+    right_wrapped = Container(
+        expand=1,
+        border=Border.all(1, Colors.OUTLINE_VARIANT),
+        border_radius=16,
+        clip_behavior=ClipBehavior.HARD_EDGE,
+        content=right_panel,
+    )
+
+    # Responsive grid: adjust runs_count on resize
+    def _on_resize(e) -> None:
+        try:
+            w = page.width or 1200
+            if w < 900:
+                middle_panel.runs_count = 2
+            elif w < 1200:
+                middle_panel.runs_count = 3
+            else:
+                middle_panel.runs_count = 4
+            middle_panel.update()
+        except Exception:
+            pass
+
+    page.on_resized = _on_resize
 
     page.add(
         SafeArea(
             expand=True,
-            content=Container(
-                border_radius=10,
-                content=Column(
-                    spacing=8,
-                    expand=True,
-                    controls=[
-                        header,
-                        Row(
-                            spacing=8,
-                            expand=True,
-                            controls=[
-                                left_panel,
-                                middle_panel,
-                                right_panel,
-                            ],
-                        ),
-                    ],
-                ),
+            content=Column(
+                spacing=12,
+                expand=True,
+                controls=[
+                    header,
+                    Divider(height=1, color=Colors.OUTLINE_VARIANT),
+                    Row(
+                        spacing=12,
+                        expand=True,
+                        controls=[
+                            left_wrapped,
+                            middle_wrapped,
+                            right_wrapped,
+                        ],
+                    ),
+                ],
             ),
         )
     )
     page.overlay.append(settings_panel)
+    # overlay for file picker used by settings import
+    try:
+        # will be added by settings panel if needed; ensure page overlay
+        pass
+    except Exception:
+        pass
 
     _lg.info(
         f"UI ready: theme={config.data.THEME}, "
