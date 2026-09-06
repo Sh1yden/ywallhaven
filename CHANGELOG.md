@@ -43,6 +43,13 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.5] - 2026-09-06
+
+### Исправлено
+
+- `themes` не создавалась во frozen-сборке (`loader.py:_theme_dir`): приоритет `cwd → MEIPASS → exe.parent` ставил `_MEIPASS/themes` (вшит, всегда существует) впереди `exe.parent/themes`, импорты писались в temp extraction и терялись. Приоритет изменён `exe.parent → cwd → repo → MEIPASS`, добавлен `_seed_examples` копирование `README/.example` в пустую папку, лог `Themes dir`.
+- Автоочистка повреждённого кэша Flet клиента (`flet_app.py:_log_flet_client_diagnostics` → автоочистка A): при пустой папке или отсутствии `*.exe`/`flet*` внутри `~/.flet/client/flet-desktop-*-0.86.4` кэш удаляется и перекачивается, иначе только лог (без удаления здорового 30МБ).
+
 ## [0.8.4] - 2026-09-06
 
 ### Исправлено
@@ -337,7 +344,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...v0.8.2

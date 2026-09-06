@@ -1,6 +1,7 @@
 """Flet application entry point: builds the main UI layout."""
 
 import asyncio
+import shutil
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -82,6 +83,54 @@ def _app_icon_bytes() -> bytes | None:
             return None
     _lg.error("App icon not found in any candidate location.")
     return None
+
+
+def _log_flet_client_diagnostics() -> None:
+    """Log and auto-clean corrupted Flet desktop client cache.
+
+    ``unknown control: <Name>`` errors almost always mean the running
+    Flutter client build doesn't match the Python ``flet`` package
+    version. ``flet_desktop`` caches under
+    ``~/.flet/client/flet-desktop-<flavor>-<version>``. Option A
+    auto-cleanup: delete only if empty or missing exe (safe, never
+    deletes healthy 30MB cache).
+    """
+    try:
+        from flet.version import flet_version
+
+        cache_root = Path.home() / ".flet" / "client"
+        matches = (
+            sorted(cache_root.glob(f"flet-desktop-*-{flet_version}"))
+            if cache_root.is_dir()
+            else []
+        )
+        # Auto-cleanup A: empty or missing exe
+        for m in matches:
+            try:
+                # Heuristic: empty dir or no executable inside
+                has_content = any(m.iterdir())
+                has_exe = any(m.rglob("*.exe")) or any(m.rglob("flet*"))
+                if not has_content or not has_exe:
+                    shutil.rmtree(m, ignore_errors=True)
+                    _lg.warning(f"Cleared corrupted Flet cache {m}")
+                    # Recompute matches after cleanup
+                    matches = (
+                        sorted(cache_root.glob(f"flet-desktop-*-{flet_version}"))
+                        if cache_root.is_dir()
+                        else []
+                    )
+            except Exception as e:
+                _lg.debug(f"Cache cleanup failed for {m}: {e}")
+
+        match_names = sorted(p.name for p in matches) if matches else []
+        _lg.info(
+            f"Flet client check: package_version={flet_version}, "
+            f"matching_cache_dirs={match_names or 'none'}. "
+            "If 'unknown control' persists, delete "
+            f"{cache_root} and restart."
+        )
+    except Exception as e:
+        _lg.debug(f"Could not inspect Flet client cache: {e}")
 
 
 def _resize_image(data: bytes, size: tuple[int, int]) -> bytes | None:
@@ -192,6 +241,7 @@ async def _build_ui(page: Page) -> None:
     file_picker = FilePicker()
     page.overlay.append(file_picker)
     _lg.debug(f"overlay services: {[type(s).__name__ for s in page.overlay]}")
+    _log_flet_client_diagnostics()
 
     async def save_wallpaper(
         url: str,
@@ -415,12 +465,6 @@ async def _build_ui(page: Page) -> None:
         )
     )
     page.overlay.append(settings_panel)
-    # overlay for file picker used by settings import
-    try:
-        # will be added by settings panel if needed; ensure page overlay
-        pass
-    except Exception:
-        pass
 
     _lg.info(
         f"UI ready: theme={config.data.THEME}, "

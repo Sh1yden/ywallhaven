@@ -1,12 +1,19 @@
 """Tests for theme registry, schema and loader."""
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
 
 from app.interface.themes.builtin import BUILTIN_THEMES
-from app.interface.themes.loader import clear_cache, get_user_themes, load_user_themes
+from app.interface.themes.loader import (
+    _candidate_theme_dirs,
+    _theme_dir,
+    clear_cache,
+    get_user_themes,
+    load_user_themes,
+)
 from app.interface.themes.schema import ThemeDefinition
 
 
@@ -180,6 +187,81 @@ def test_loader_duplicate_id_overwrites(tmp_path, monkeypatch) -> None:
     )
     user = load_user_themes(force=True)
     assert user["dup"].name == "Second"
+    clear_cache()
+
+
+def test_theme_dir_prefers_exe_parent_over_meipass_when_frozen(
+    tmp_path, monkeypatch
+) -> None:
+    """Regression test for the 0.8.4 bug: under a frozen build, the
+    persistent themes dir must be next to the executable, never the
+    temporary ``_MEIPASS`` extraction copy (which always "exists"
+    because it's bundled, so it silently won under the old first-match
+    logic and every imported theme was lost on the next launch).
+    """
+    clear_cache()
+    exe_dir = tmp_path / "installed_app"
+    exe_dir.mkdir()
+    meipass_dir = tmp_path / "meipass_extract"
+    (meipass_dir / "themes").mkdir(parents=True)
+    (meipass_dir / "themes" / "README.md").write_text(
+        "hi", encoding="utf-8"
+    )
+    (meipass_dir / "themes" / "example_ocean.json.example").write_text(
+        "{}", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(sys, "_MEIPASS", str(meipass_dir), raising=False)
+    monkeypatch.setattr(
+        sys, "executable", str(exe_dir / "ywallhaven.exe"), raising=False
+    )
+
+    candidates = _candidate_theme_dirs()
+    assert candidates[0] == exe_dir / "themes"
+    assert meipass_dir / "themes" in candidates
+    assert candidates.index(exe_dir / "themes") < candidates.index(
+        meipass_dir / "themes"
+    )
+
+    tdir = _theme_dir()
+    assert tdir == exe_dir / "themes"
+    assert tdir.is_dir()
+    # Seeded from the bundled copy since it started out empty.
+    assert (tdir / "README.md").exists()
+    assert (tdir / "example_ocean.json.example").exists()
+    clear_cache()
+
+
+def test_theme_dir_seed_does_not_overwrite_existing_imports(
+    tmp_path, monkeypatch
+) -> None:
+    """Seeding must never clobber themes the user already imported."""
+    clear_cache()
+    exe_dir = tmp_path / "installed_app"
+    exe_dir.mkdir()
+    (exe_dir / "themes").mkdir()
+    (exe_dir / "themes" / "my_theme.json").write_text(
+        json.dumps(
+            {"id": "mine", "name": "Mine", "mode": "dark", "seed": "#111111"}
+        ),
+        encoding="utf-8",
+    )
+    meipass_dir = tmp_path / "meipass_extract"
+    (meipass_dir / "themes").mkdir(parents=True)
+    (meipass_dir / "themes" / "README.md").write_text(
+        "hi", encoding="utf-8"
+    )
+
+    monkeypatch.setattr(sys, "_MEIPASS", str(meipass_dir), raising=False)
+    monkeypatch.setattr(
+        sys, "executable", str(exe_dir / "ywallhaven.exe"), raising=False
+    )
+
+    tdir = _theme_dir()
+    assert tdir == exe_dir / "themes"
+    assert (tdir / "my_theme.json").exists()
+    # Not seeded: dir already had content before _theme_dir() ran.
+    assert not (tdir / "README.md").exists()
     clear_cache()
 
 
