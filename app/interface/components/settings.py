@@ -61,7 +61,7 @@ class SettingsPanel(Container):
         self._on_api_key_change = on_api_key_change
         self.expand = True
         self.visible = False
-        self._theme_picker = FilePicker(on_result=self._on_theme_import)
+        self._theme_picker = FilePicker()
         self.content = self._build_overlay()
 
     def did_mount(self) -> None:
@@ -260,15 +260,17 @@ class SettingsPanel(Container):
         except Exception as e:
             _lg.debug(f"Failed to refresh theme options: {e}")
 
-    def _on_import_theme(self, e) -> None:
+    async def _on_import_theme(self, e) -> None:
         """Open file picker for theme JSON."""
         try:
-            self._theme_picker.pick_files(
+            files = await self._theme_picker.pick_files(
                 dialog_title="Import theme JSON",
                 allowed_extensions=["json"],
                 file_type=FilePickerFileType.CUSTOM,
                 allow_multiple=False,
             )
+            if files:
+                await self._handle_theme_files(files)
         except Exception as ex:
             _lg.warning(f"Import picker failed: {ex}")
             self.page.show_dialog(
@@ -279,11 +281,11 @@ class SettingsPanel(Container):
                 )
             )
 
-    def _on_theme_import(self, e) -> None:  # type: ignore[no-untyped-def]
-        """Handle picked theme file: validate and copy to themes/."""
-        if not e.files:
+    async def _handle_theme_files(self, files) -> None:  # type: ignore[no-untyped-def]
+        """Handle picked theme files: validate and copy to themes/."""
+        if not files:
             return
-        picked = e.files[0]
+        picked = files[0]
         src_path = getattr(picked, "path", None)
         if not src_path:
             self.page.show_dialog(

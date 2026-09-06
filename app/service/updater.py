@@ -294,6 +294,21 @@ class UpdaterService(LoggerMixin):
             return False
 
         log_path = exe_path.parent / "ywallhaven_updater.log"
+        # Diagnostic: ensure file exists and is not about to be cleaned
+        try:
+            exists = downloaded.is_file()
+            size = downloaded.stat().st_size if exists else 0
+            self._lg.debug(
+                f"Updater src check: exists={exists}, size={size}, path={downloaded}"
+            )
+            if not exists:
+                # List temp dir for debugging
+                tmp_files = list(Path(gettempdir()).glob("ywallhaven-*-update.exe"))
+                self._lg.error(f"Temp update files present: {tmp_files}")
+                return False
+        except Exception as e:
+            self._lg.warning(f"Updater src check failed: {e}")
+
         command = [
             str(helper),
             "--pid", str(os.getpid()),

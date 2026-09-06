@@ -6,10 +6,16 @@ from app import main
 
 
 def test_cleanup_update_files_removes_leftovers(tmp_path, monkeypatch) -> None:
+    import os
+    import time
+
     leftover = tmp_path / "ywallhaven-0.7.2-update.exe"
     keep = tmp_path / "keep.exe"
     leftover.write_bytes(b"x")
     keep.write_bytes(b"x")
+    # Make leftover old enough to be cleaned (our cleanup keeps fresh <600s)
+    old = time.time() - 700
+    os.utime(leftover, (old, old))
 
     monkeypatch.setattr(main, "gettempdir", lambda: str(tmp_path))
     main._cleanup_update_files()

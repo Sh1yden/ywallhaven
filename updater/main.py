@@ -138,6 +138,13 @@ def main() -> int:
 
     if not args.src.is_file():
         logger.error(f"Source file missing: {args.src}")
+        try:
+            parent = args.src.parent
+            existing = list(parent.glob("ywallhaven-*-update.exe"))
+            logger.error(f"Src parent listing: {existing}")
+            logger.error(f"Src resolve: {args.src.resolve() if args.src.exists() else 'no resolve'}")
+        except Exception as ex:
+            logger.error(f"Failed to list src parent: {ex}")
         return 1
 
     if not _wait_for_exit(args.pid, WAIT_TIMEOUT_SECONDS, logger):

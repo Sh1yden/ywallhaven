@@ -37,11 +37,25 @@ def _cleanup_update_files():
     """Remove leftover downloaded executables from the temp directory.
 
     Every successful update copies the new executable to its final
-    location, so the temp copies are pure leftovers.
+    location, so the temp copies are pure leftovers. Fresh files
+    (newer than 10 minutes) are kept to avoid deleting a download
+    that the helper is about to use — fixes the race where
+    ``cleanup()`` runs right after ``launch_updater``.
     """
+    import time
+
+    now = time.time()
     for path in Path(gettempdir()).glob(_UPDATE_FILE_PATTERN):
         try:
+            # Keep files newer than 10 minutes
+            try:
+                if now - path.stat().st_mtime < 600:
+                    _lg.debug(f"Skipping fresh update file {path}")
+                    continue
+            except OSError:
+                pass
             path.unlink()
+            _lg.debug(f"Cleaned leftover update file {path}")
         except OSError:
             pass
 

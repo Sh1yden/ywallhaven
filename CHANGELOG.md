@@ -36,9 +36,18 @@
     - [x] Система заготовленных тем (9 builtin: dark_default, light_default, midnight, forest, ocean, sunset, arctic, kanagawa_wave, kanagawa_lotus из rebelot/kanagawa.nvim)
     - [x] Система собственных тем (пользовательских) в определённом формате (themes/*.json, гибрид seed+colors, import через UI)
 - [x] Улучшить внешний вид приложения (C3 редизайн: header Card, surface tokens, responsive grid, skeleton, empty states, chips)
+- [ ] Fix updater'a(логи при его запуске чек)
 - [ ] Изменить иконку собранного exe на свою
 - [ ] Изменить иконку запущенного приложения со стандартной на свою
 - [ ] Добавить закрытие всплывающих меню по клику вне его(исключительно меню скачки картинки, когда выбираешь его разрешения)
+
+## [0.8.1] - 2026-09-06
+
+### Исправлено
+
+- `FilePicker.__init__() got an unexpected keyword argument 'on_result'` (`app/interface/components/settings.py:64`): `FilePicker` в `flet==0.86.4` не принимает `on_result` в конструкторе, `pick_files` теперь `async` возвращает `list[FilePickerFile]`. Заменено на `FilePicker()` + `await picker.pick_files()` в `SettingsPanel._on_import_theme`/`_handle_theme_files`.
+- Апдейтер падал с `Source file missing: ...ywallhaven-0.8.0-update.exe` (`updater/main.py:139`): `main.py:cleanup` (`_cleanup_update_files`) удалял свежий `*update.exe` сразу после `Popen` helper, до проверки `is_file` в хелпере (гонка 0.6с). Добавлен пропуск файлов новее 10 минут + лог `src exists/size` перед `Popen` в `UpdaterService.launch_updater` и листинг `parent.glob` в хелпере.
+- Тест `test_main.py::test_cleanup_update_files_removes_leftovers` обновлён: `os.utime` на 700с назад для проверки удаления.
 
 ## [0.8.0] - 2026-09-06
 
@@ -302,7 +311,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...v0.7.3
 [0.7.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.1...v0.7.2
