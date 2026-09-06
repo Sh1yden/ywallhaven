@@ -191,8 +191,7 @@ async def _build_ui(page: Page) -> None:
 
     file_picker = FilePicker()
     page.overlay.append(file_picker)
-    theme_picker = FilePicker()
-    page.overlay.append(theme_picker)
+    _lg.debug(f"overlay services: {[type(s).__name__ for s in page.overlay]}")
 
     async def save_wallpaper(
         url: str,
@@ -302,7 +301,7 @@ async def _build_ui(page: Page) -> None:
 
     settings_panel = SettingsPanel(
         on_api_key_change=on_api_key_change,
-        theme_picker=theme_picker,
+        theme_picker=file_picker,
     )
 
     icon_bytes = _app_icon_bytes()

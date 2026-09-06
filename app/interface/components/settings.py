@@ -3,7 +3,6 @@
 from typing import Callable
 
 import json
-import shutil
 from pathlib import Path
 
 from flet import (
@@ -62,36 +61,10 @@ class SettingsPanel(Container):
         self._on_api_key_change = on_api_key_change
         self.expand = True
         self.visible = False
-        self._theme_picker = theme_picker or FilePicker()
+        if theme_picker is None:
+            raise ValueError("theme_picker must be provided from flet_app")
+        self._theme_picker = theme_picker
         self.content = self._build_overlay()
-
-    def did_mount(self) -> None:
-        """Attach file picker to page overlay."""
-        try:
-            super().did_mount()
-        except Exception:
-            pass
-        try:
-            if self.page and self._theme_picker not in self.page.overlay:
-                self.page.overlay.append(self._theme_picker)
-                self.page.update()
-        except Exception as e:
-            _lg.debug(f"Failed to mount theme picker: {e}")
-
-    def will_unmount(self) -> None:
-        """Detach file picker."""
-        try:
-            super().will_unmount()
-        except Exception:
-            pass
-        try:
-            if (
-                self.page
-                and self._theme_picker in self.page.overlay
-            ):
-                self.page.overlay.remove(self._theme_picker)
-        except Exception:
-            pass
 
     # Public API ----------------------------------------------------
 

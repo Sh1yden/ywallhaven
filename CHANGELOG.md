@@ -43,6 +43,12 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.4] - 2026-09-06
+
+### Исправлено
+
+- `unknown control: FilePicker` поверх левой панели (`settings.py:64`, `flet_app.py:192`): `SettingsPanel` держал отдельный `_theme_picker` с `did_mount` → `page.overlay.append` после `page.add`, клиент получал 2 `FilePicker` сервиса (`FilePicker(9)` + `10`) → `unknown control`. Оставлен **один** `FilePicker` (`file_picker`) для `save_file` и `pick_files`, `SettingsPanel(theme_picker=file_picker)`, `did_mount`/`will_unmount` удалены, убран `import shutil`.
+
 ## [0.8.3] - 2026-09-06
 
 ### Исправлено
@@ -331,7 +337,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...v0.8.1
