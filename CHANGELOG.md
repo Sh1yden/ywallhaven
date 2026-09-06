@@ -36,10 +36,24 @@
     - [x] Система заготовленных тем (9 builtin: dark_default, light_default, midnight, forest, ocean, sunset, arctic, kanagawa_wave, kanagawa_lotus из rebelot/kanagawa.nvim)
     - [x] Система собственных тем (пользовательских) в определённом формате (themes/*.json, гибрид seed+colors, import через UI)
 - [x] Улучшить внешний вид приложения (C3 редизайн: header Card, surface tokens, responsive grid, skeleton, empty states, chips)
-- [ ] Fix updater'a(логи при его запуске чек)
+- [x] Fix updater'a(логи при его запуске чек)
 - [ ] Изменить иконку собранного exe на свою
 - [ ] Изменить иконку запущенного приложения со стандартной на свою
 - [ ] Добавить закрытие всплывающих меню по клику вне его(исключительно меню скачки картинки, когда выбираешь его разрешения)
+- [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
+- [ ] Получше залогировать приложение
+
+## [0.8.2] - 2026-09-06
+
+### Исправлено
+
+- `unknown control: FilePicker` на левой панели (`settings.py:64`, `flet_app.py:192`): `SettingsPanel` создавал `_theme_picker = FilePicker()` и добавлял в `page.overlay` в `did_mount()` (после `page.add`), клиент Flutter не знал сервис. Перенесён в `flet_app._build_ui` — `theme_picker = FilePicker(); page.overlay.append(theme_picker)` до `page.add`, `SettingsPanel(theme_picker=theme_picker)`.
+
+### Изменено
+
+- `themes` примеры сделаны неактивными: `example_ocean.json` → `example_ocean.json.example`, `example_light_paper.json` → `example_light_paper.json.example`; `loader` `glob("*.json")` их не грузит → `Dropdown` только 9 builtin без мусора. `themes/README.md` — подсказка переименовать `*.example` → `*.json`.
+- `ywallhaven.spec` — `datas=[('assets/icon.png','assets'),('themes','themes')]` чтобы `README.md` + `.example` попадали в `dist`/`_MEI*`.
+- `.gitignore` — `!themes/*.example` вместо `!themes/example_*.json`.
 
 ## [0.8.1] - 2026-09-06
 
@@ -311,7 +325,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.3...v0.8.0
 [0.7.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.7.2...v0.7.3

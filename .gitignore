@@ -217,10 +217,10 @@ pyrightconfig.json
 # My config
 config.json
 
-# User themes (keep examples, ignore personal)
+# User themes (keep examples inactive, ignore personal)
 themes/user_*.json
 themes/custom_*.json
-!themes/example_*.json
+!themes/*.example
 !themes/README.md
 
 # Generated at build time

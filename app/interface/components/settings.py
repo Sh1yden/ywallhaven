@@ -56,12 +56,13 @@ class SettingsPanel(Container):
     def __init__(
         self,
         on_api_key_change: Callable[[str], None] | None = None,
+        theme_picker: FilePicker | None = None,
     ) -> None:
         super().__init__()
         self._on_api_key_change = on_api_key_change
         self.expand = True
         self.visible = False
-        self._theme_picker = FilePicker()
+        self._theme_picker = theme_picker or FilePicker()
         self.content = self._build_overlay()
 
     def did_mount(self) -> None:
