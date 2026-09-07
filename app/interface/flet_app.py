@@ -147,7 +147,9 @@ def _resize_image(data: bytes, size: tuple[int, int]) -> bytes | None:
         image = PILImage.open(BytesIO(data))
         if getattr(image, "is_animated", False):
             return None
-        image.thumbnail((size[0], size[1]), Image.LANCZOS)
+        # Pillow 11: Image.LANCZOS removed -> Resampling.LANCZOS
+        lanczos = getattr(PILImage, "LANCZOS", getattr(getattr(PILImage, "Resampling", None), "LANCZOS", 1))
+        image.thumbnail((size[0], size[1]), lanczos)
         output = BytesIO()
         if image.mode in ("RGBA", "LA", "P"):
             image = image.convert("RGBA")
@@ -246,7 +248,7 @@ async def _build_ui(page: Page) -> None:
 
     page.on_disconnect = on_disconnect
 
-    # FilePicker creation + overlay with detailed logging (до page.add)
+    # FilePicker creation + overlay with detailed logging (до page.add) — 2 пикера: file_picker для save, theme_picker для pick
     try:
         from flet.version import flet_version
 
@@ -256,12 +258,14 @@ async def _build_ui(page: Page) -> None:
     _lg.debug(f"overlay before FilePicker: {[type(s).__name__ for s in page.overlay]}")
     try:
         file_picker = FilePicker()
-        _lg.info(f"FilePicker created: {file_picker} uid={getattr(file_picker, 'uid', '?')}")
+        theme_picker = FilePicker()
+        _lg.info(f"FilePicker created: file_picker={file_picker} theme_picker={theme_picker}")
     except Exception as e:
         _lg.critical(f"FilePicker init failed at flet_app.py:241", exc_info=True)
         raise
     try:
         page.overlay.append(file_picker)
+        page.overlay.append(theme_picker)
         _lg.info(f"FilePicker appended to overlay, now {[type(s).__name__ for s in page.overlay]}")
     except Exception as e:
         _lg.critical(f"FilePicker overlay append failed at flet_app.py:242", exc_info=True)
@@ -385,7 +389,7 @@ async def _build_ui(page: Page) -> None:
 
     settings_panel = SettingsPanel(
         on_api_key_change=on_api_key_change,
-        theme_picker=file_picker,
+        theme_picker=theme_picker,
     )
 
     icon_bytes = _app_icon_bytes()

@@ -43,6 +43,12 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.7] - 2026-09-06
+
+### Исправлено
+
+- Скачивание падало `TimeoutException FilePicker(9).save_file` + `Image has no attribute 'LANCZOS'` (`flet_app.py:308`, `136`): `Pillow 11` удалил `Image.LANCZOS` → `Resampling.LANCZOS`, `FilePicker` один на `save_file`+`pick_files` давал таймаут 10с при конкурентном `invokeMethod`. Возвращены 2 `FilePicker` (`file_picker` для `save_file`, `theme_picker` для `pick_files`), оба `page.overlay.append` до `page.add` (как до `0.8.4` когда `save` работал), без `unknown control`.
+
 ## [0.8.6] - 2026-09-06
 
 ### Исправлено
@@ -350,7 +356,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...v0.8.4
