@@ -1,6 +1,7 @@
 """Middle panel: scrollable wallpaper grid with infinite scroll."""
 
 import asyncio
+import time
 from typing import Any, Dict, List
 
 from flet import (
@@ -46,6 +47,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self.runs_count = 4
         self.spacing = 12
         self.run_spacing = 12
+        self.child_aspect_ratio = 16 / 9
         self.padding = 4
         self.controls = []
         self.state_page = 1
@@ -55,7 +57,11 @@ class MiddlePanel(GridView, LoggerMixin):
         self._generation = 0
 
         self._load_lock = asyncio.Lock()
+        self._load_wanted = False
         self._in_trigger_zone = False
+        self._prefetch_lock = asyncio.Lock()
+        self._prefetched_page: List[Dict[str, Any]] | None = None
+        self._prefetched_page_number: int | None = None
 
         self.on_scroll = self.handle_scroll
 
@@ -84,27 +90,41 @@ class MiddlePanel(GridView, LoggerMixin):
         self.has_more = True
         self._wallpapers.clear()
         self.controls.clear()
+        self._load_wanted = False
         self._in_trigger_zone = False
+        self._prefetched_page = None
+        self._prefetched_page_number = None
 
         self.page.run_task(self.load_more)
 
     async def load_more(self, *args) -> None:
-        """Fetch and append the next page of wallpapers."""
+        """Fetch and append the next page of wallpapers.
+
+        Pages are loaded under a lock. While a load is in flight further
+        calls only set a wish flag, so the in-flight load re-fires once
+        instead of spawning duplicate requests. The page after the one
+        just rendered is prefetched in the background, so reaching the
+        bottom of a page usually hits the cache.
+        """
         if not self.has_more:
             return
 
+        self._load_wanted = True
         if self._load_lock.locked():
-            self.page.run_task(self._retry_load)
             return
 
         async with self._load_lock:
             generation = self._generation
+            self._load_wanted = False
+            page_start = time.perf_counter()
             try:
                 self._lg.debug(f"Loading page {self.state_page}...")
 
-                wallpapers = await self.api_client.search_wallpapers(
-                    page=self.state_page, **self._filters
-                )
+                wallpapers = self._consume_prefetched()
+                if wallpapers is None:
+                    wallpapers = await self.api_client.search_wallpapers(
+                        page=self.state_page, **self._filters
+                    )
 
                 if generation != self._generation:
                     return
@@ -123,28 +143,102 @@ class MiddlePanel(GridView, LoggerMixin):
                 )
                 self.state_page += 1
                 self.update()
+                self._lg.debug(
+                    f"Page {self.state_page - 1} rendered: "
+                    f"{len(wallpapers)} wallpapers added "
+                    f"({(time.perf_counter() - page_start) * 1000:.0f} ms), "
+                    f"total {len(self._wallpapers)}."
+                )
             except Exception as e:
                 if generation == self._generation:
                     # Transient 502/503 etc — retry, don't kill pagination
                     msg = str(e).lower()
                     is_transient = any(
-                        s in msg for s in ("502", "503", "429", "500", "bad gateway")
+                        s in msg
+                        for s in ("502", "503", "429", "500", "bad gateway")
                     ) or "transient" in msg
                     if is_transient:
-                        self._lg.warning(f"Transient load error, retrying: {e}")
+                        self._lg.warning(
+                            f"Transient load error, retrying: {e}"
+                        )
+                        self._load_wanted = False
                         self.page.run_task(self._retry_with_delay, 1.0)
                     else:
                         self._lg.critical(f"Internal error: {e}.")
+                return
+
+        if self._load_wanted and self.has_more:
+            self.page.run_task(self.load_more)
+        elif self.has_more:
+            self.page.run_task(self._prefetch_next_page)
 
     async def _retry_with_delay(self, delay: float) -> None:
         """Retry load_more after delay."""
         await asyncio.sleep(delay)
         await self.load_more()
 
-    async def _retry_load(self) -> None:
-        """Wait a bit and retry loading after a stale request."""
-        await asyncio.sleep(0.1)
-        await self.load_more()
+    def _consume_prefetched(self) -> List[Dict[str, Any]] | None:
+        """Return the cached next page when it matches the current one.
+
+        Stale prefetches (the grid has already advanced past the cached
+        page number) are dropped so they never block a newer prefetch.
+
+        Returns:
+            The prefetched wallpaper list, or None to load via network.
+        """
+        if (
+            self._prefetched_page is not None
+            and self._prefetched_page_number == self.state_page
+        ):
+            data = self._prefetched_page
+            self._prefetched_page = None
+            self._prefetched_page_number = None
+            return data
+        if self._prefetched_page is not None:
+            self._prefetched_page = None
+            self._prefetched_page_number = None
+        return None
+
+    async def _prefetch_next_page(self) -> None:
+        """Fetch the page after the rendered one into the background cache.
+
+        Fire-and-forget: transient failures just leave the cache empty and
+        the explicit load retries on its own; an empty page marks the end.
+        """
+        if not self.has_more or self._prefetch_lock.locked():
+            return
+        if self._prefetched_page is not None:
+            return
+
+        generation = self._generation
+        page = self.state_page
+        async with self._prefetch_lock:
+            if self._prefetched_page is not None:
+                return
+            self._lg.debug(f"Prefetching page {page} in background...")
+            try:
+                data = await self.api_client.search_wallpapers(
+                    page=page, **self._filters
+                )
+            except Exception as e:
+                msg = str(e).lower()
+                is_transient = any(
+                    s in msg
+                    for s in ("502", "503", "429", "500", "bad gateway")
+                ) or "transient" in msg
+                self._lg.debug(
+                    f"Prefetch of page {page} skipped "
+                    f"({'transient' if is_transient else 'error'}): {e}"
+                )
+                return
+            if generation != self._generation:
+                return
+            if not data:
+                self.has_more = False
+                return
+            self._prefetched_page = data
+            self._prefetched_page_number = page
+            self._lg.debug(f"Prefetched page {page} ({len(data)} items).")
 
     async def select_relative(
         self, delta: int, index: int | None

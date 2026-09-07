@@ -226,6 +226,7 @@ themes/custom_*.json
 # Generated at build time
 app/core/_version.py
 build/version_info.txt
+assets/icon.ico
 
 # Marimo
 marimo/_static/

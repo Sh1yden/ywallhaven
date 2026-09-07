@@ -116,6 +116,82 @@ async def test_get_wallpaper_returns_none_on_http_error():
 
 
 @pytest.mark.asyncio
+async def test_get_wallpaper_caches_details():
+    """Repeated detail requests for the same ID must not hit network."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"data": detail})
+
+    api = make_client(handler)
+    first = await api.get_wallpaper("abc123")
+    second = await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert first == detail
+    assert second == detail
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_retries_transient_then_succeeds():
+    """A transient 503 must be retried instead of returning None."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    responses = iter([httpx.Response(503), httpx.Response(200, json={"data": detail})])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    api = make_client(handler)
+    result = await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert result == detail
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_cache_cleared_on_apik_change():
+    """A new API key must drop cached detail responses."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.params.get("apikey"))
+        return httpx.Response(200, json={"data": detail})
+
+    api = make_client(handler)
+    await api.get_wallpaper("abc123")
+    api.apik = "new-key"
+    await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert calls == ["test-key", "new-key"]
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_evicts_lru_overflow():
+    """The detail cache must not grow beyond its configured limit."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"data": detail})
+
+    api = make_client(handler)
+    api.DETAILS_CACHE_MAX = 1
+    await api.get_wallpaper("one")
+    await api.get_wallpaper("two")
+    await api.get_wallpaper("one")
+    await api.close()
+
+    # "one" got evicted when "two" was stored, so it must be re-fetched.
+    assert len(calls) == 3
+
+
+@pytest.mark.asyncio
 async def test_fetch_bytes_returns_content():
     api = make_client(lambda request: httpx.Response(200, content=b"data"))
     result = await api.fetch_bytes("https://example.com/w.jpg")

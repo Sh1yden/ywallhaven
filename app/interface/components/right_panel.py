@@ -1,6 +1,7 @@
 """Right panel: preview and properties of the selected wallpaper."""
 
 import os
+import time
 from typing import Any, Callable, Dict, List
 
 from flet import (
@@ -73,6 +74,8 @@ class RightPanel(Container):
         self._backdrop_image: Image | None = None
         self._tags_fetch_generation = 0
         self._tags_expanded = False
+        self._dialog: AlertDialog | None = None
+        self._dialog_barrier: Container | None = None
 
     def did_mount(self) -> None:
         """Create and mount the fullscreen layer above the page."""
@@ -110,6 +113,7 @@ class RightPanel(Container):
             wallpaper: Wallpaper dict from the Wallhaven API.
             index: Index of the wallpaper in the loaded grid cache.
         """
+        start = time.perf_counter()
         self._last_wallpaper = wallpaper
         self._tags_expanded = False
         if index is not None:
@@ -131,6 +135,10 @@ class RightPanel(Container):
             ],
         )
         self.update()
+        _lg.debug(
+            f"Preview rendered in "
+            f"{(time.perf_counter() - start) * 1000:.0f} ms."
+        )
 
         self.page.run_task(self._load_tags, wallpaper)
 
@@ -238,7 +246,7 @@ class RightPanel(Container):
             )
 
         dialog = AlertDialog(
-            modal=True,
+            modal=False,
             title=Text("Download wallpaper"),
             actions_alignment=MainAxisAlignment.CENTER,
             actions=[
@@ -250,8 +258,21 @@ class RightPanel(Container):
                 controls=controls,
             ),
         )
+        # Mount a transparent full-screen barrier behind the dialog so a
+        # click outside it closes it (AlertDialog has no dismissible
+        # barrier). Both live in page.overlay: barrier first, dialog on top.
+        self._close_dialog()
+        dialog.open = True
+        barrier = Container(
+            expand=True,
+            bgcolor=Colors.TRANSPARENT,
+            on_click=self._close_dialog,
+        )
         self._dialog = dialog
-        self.page.show_dialog(dialog)
+        self._dialog_barrier = barrier
+        self.page.overlay.append(barrier)
+        self.page.overlay.append(dialog)
+        self.page.overlay.update()
 
         if not width or not height:
             self.page.run_task(
@@ -312,14 +333,24 @@ class RightPanel(Container):
         file_name = WallhavenAPI.build_filename(wallpaper)
         return os.path.splitext(file_name)
 
-    def _close_dialog(self, e) -> None:
-        """Close the resolution chooser dialog without downloading.
+    def _close_dialog(self, e=None) -> None:
+        """Close the resolution chooser and drop its background barrier.
 
         Args:
-            e: Click event from the cancel button.
+            e: Optional click event from the cancel/barrier.
         """
-        self._dialog.open = False
-        self._dialog.update()
+        overlay = self.page.overlay
+        dialog = self._dialog
+        barrier = self._dialog_barrier
+        self._dialog = None
+        self._dialog_barrier = None
+
+        if dialog is not None and dialog in overlay:
+            dialog.open = False
+            overlay.remove(dialog)
+        if barrier is not None and barrier in overlay:
+            overlay.remove(barrier)
+        overlay.update()
 
     def _resolution_option(
         self,
@@ -342,8 +373,7 @@ class RightPanel(Container):
         file_name = f"{base}{ext}" if size is None else f"{base}-{label}.jpg"
 
         def choose(e, size=size, file_name=file_name) -> None:
-            self._dialog.open = False
-            self._dialog.update()
+            self._close_dialog(e)
             self._on_download(
                 self._last_wallpaper.get("path", ""), file_name, size
             )
@@ -408,6 +438,7 @@ class RightPanel(Container):
         Returns:
             Rounded container with the full-size image.
         """
+        small_thumb = (wallpaper.get("thumbs") or {}).get("small")
         return Container(
             expand=True,
             border_radius=16,
@@ -423,6 +454,8 @@ class RightPanel(Container):
                         fit=BoxFit.COVER,
                         expand=True,
                         border_radius=16,
+                        placeholder_src=small_thumb,
+                        gapless_playback=True,
                     ),
                     Container(
                         alignment=Alignment.BOTTOM_RIGHT,

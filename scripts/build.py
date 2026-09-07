@@ -6,7 +6,8 @@ Steps:
 1. Resolve the current version from the package metadata (hatch-vcs).
 2. Generate ``app/core/_version.py`` with the resolved version.
 3. Generate the Windows version info file ``build/version_info.txt``.
-4. Build ``ywallhaven.exe`` and ``ywallhaven-updater.exe`` via PyInstaller.
+4. Convert ``assets/icon.png`` to ``assets/icon.ico`` for the exe icon.
+5. Build ``ywallhaven.exe`` and ``ywallhaven-updater.exe`` via PyInstaller.
 """
 
 import re
@@ -14,9 +15,13 @@ import subprocess
 import sys
 from pathlib import Path
 
+from PIL import Image as PILImage
+
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_MODULE = ROOT / "app" / "core" / "_version.py"
 VERSION_INFO = ROOT / "build" / "version_info.txt"
+ICON_PNG = ROOT / "assets" / "icon.png"
+ICON_ICO = ROOT / "assets" / "icon.ico"
 SPECS = [
     ROOT / "ywallhaven.spec",
     ROOT / "ywallhaven-updater.spec",
@@ -101,6 +106,21 @@ def write_version_info(version: str) -> None:
     )
 
 
+def ensure_icon_ico() -> None:
+    """Convert the bundled PNG icon to a Windows .ico if missing.
+
+    PyInstaller needs an ``.ico`` for the exe icon; the generated file is
+    also bundled as data so the running app can set the window icon.
+    """
+    if ICON_ICO.exists():
+        return
+    if not ICON_PNG.is_file():
+        sys.exit(f"Missing source icon: {ICON_PNG}")
+    with PILImage.open(ICON_PNG) as img:
+        img.save(ICON_ICO, format="ICO")
+    print(f"Generated {ICON_ICO.relative_to(ROOT)}")
+
+
 def build() -> None:
     """Run the whole build pipeline."""
     version = resolve_version()
@@ -111,6 +131,8 @@ def build() -> None:
 
     write_version_info(version)
     print(f"Generated {VERSION_INFO.relative_to(ROOT)}")
+
+    ensure_icon_ico()
 
     for spec in SPECS:
         if not spec.is_file():

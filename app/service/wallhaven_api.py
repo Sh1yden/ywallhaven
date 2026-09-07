@@ -1,6 +1,8 @@
 """Async client for the Wallhaven public API v1."""
 
+import asyncio
 import time
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional
 
 from httpx import AsyncClient, HTTPError
@@ -21,10 +23,33 @@ class WallhavenAPI(LoggerMixin):
         "image/bmp": ".bmp",
     }
 
+    TRANSIENT_STATUSES = (429, 502, 503, 504)
+    DETAILS_CACHE_MAX = 256
+
     def __init__(self, apik: str | None = None) -> None:
         super().__init__()
-        self.apik = apik or config.data.APIK
+        self._apik: str | None = None
+        self._details_cache: OrderedDict[str, Dict[str, Any]] = (
+            OrderedDict()
+        )
         self.client = AsyncClient(base_url=self.BASE_URL, timeout=15.0)
+        self.apik = apik or config.data.APIK
+
+    @property
+    def apik(self) -> str | None:
+        """Wallhaven API key used for NSFW-capable requests."""
+        return self._apik
+
+    @apik.setter
+    def apik(self, value: str | None) -> None:
+        """Set the API key, dropping cached details on key change.
+
+        Purity visibility and returned tags depend on the key, so detail
+        responses fetched under an old key must not be reused.
+        """
+        if value != self._apik:
+            self._details_cache.clear()
+        self._apik = value
 
     async def close(self):
         """Close the underlying HTTP client session."""
@@ -104,7 +129,7 @@ class WallhavenAPI(LoggerMixin):
         except HTTPError as e:
             # Transient 502/503/429 should be retried, not treated as "no more"
             status = getattr(getattr(e, "response", None), "status_code", 0)
-            if status in (429, 502, 503, 504):
+            if status in self.TRANSIENT_STATUSES:
                 self._lg.warning(
                     f"Transient Wallhaven error {status}: {e} — will retry"
                 )
@@ -112,37 +137,80 @@ class WallhavenAPI(LoggerMixin):
             self._lg.error(f"Error by req to Wallhaven: {e}.")
             return []
 
-    async def get_wallpaper(self, wallpaper_id: str) -> Dict[str, Any] | None:
+    async def get_wallpaper(
+        self, wallpaper_id: str, retries: int = 2
+    ) -> Dict[str, Any] | None:
         """Fetch a single wallpaper by its ID including its tags.
 
         The search endpoint response does not contain tags, so a detail
-        request is needed to render the clickable tag chips.
+        request is needed to render the clickable tag chips. Successful
+        responses are cached per ID (LRU) so revisiting a wallpaper
+        (grid re-click or fullscreen navigation) is instant. Transient
+        errors (429/502/503/504) are retried with a short backoff.
 
         Args:
             wallpaper_id: Wallhaven wallpaper ID.
+            retries: Number of follow-up attempts after a transient error.
 
         Returns:
             Wallpaper dict including tags, or None on failure.
         """
+        cached = self._details_cache.get(wallpaper_id)
+        if cached is not None:
+            self._details_cache.move_to_end(wallpaper_id)
+            return cached
+
         params: Dict[str, Any] = {}
         if self.apik:
             params["apikey"] = self.apik
 
-        try:
-            start = time.perf_counter()
-            response = await self.client.get(
-                f"/w/{wallpaper_id}", params=params
-            )
-            response.raise_for_status()
-            elapsed_ms = (time.perf_counter() - start) * 1000
-            self._lg.debug(
-                f"Fetched wallpaper {wallpaper_id} in "
-                f"{elapsed_ms:.0f} ms ({len(response.content)} bytes)."
-            )
-            return response.json().get("data")
-        except HTTPError as e:
-            self._lg.error(f"Failed to fetch wallpaper {wallpaper_id}: {e}.")
-            return None
+        for attempt in range(retries + 1):
+            try:
+                start = time.perf_counter()
+                response = await self.client.get(
+                    f"/w/{wallpaper_id}", params=params
+                )
+                response.raise_for_status()
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                self._lg.debug(
+                    f"Fetched wallpaper {wallpaper_id} in "
+                    f"{elapsed_ms:.0f} ms ({len(response.content)} bytes)."
+                )
+                data = response.json().get("data")
+                if data:
+                    self._cache_details(wallpaper_id, data)
+                return data
+            except HTTPError as e:
+                status = getattr(
+                    getattr(e, "response", None), "status_code", 0
+                )
+                if status in self.TRANSIENT_STATUSES and attempt < retries:
+                    self._lg.warning(
+                        f"Transient Wallhaven error {status} while "
+                        f"fetching {wallpaper_id}, retry "
+                        f"{attempt + 1}/{retries}: {e}"
+                    )
+                    await asyncio.sleep(0.5 * (attempt + 1))
+                    continue
+                self._lg.error(
+                    f"Failed to fetch wallpaper {wallpaper_id}: {e}."
+                )
+                break
+        return None
+
+    def _cache_details(
+        self, wallpaper_id: str, data: Dict[str, Any]
+    ) -> None:
+        """Store a detail response, evicting the oldest on overflow.
+
+        Args:
+            wallpaper_id: Wallhaven wallpaper ID.
+            data: Wallpaper detail dict from the API.
+        """
+        self._details_cache[wallpaper_id] = data
+        self._details_cache.move_to_end(wallpaper_id)
+        while len(self._details_cache) > self.DETAILS_CACHE_MAX:
+            self._details_cache.popitem(last=False)
 
     async def fetch_bytes(self, url: str) -> bytes | None:
         """Download a wallpaper file content as bytes.

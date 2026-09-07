@@ -3,6 +3,7 @@
 import asyncio
 import shutil
 import sys
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -50,8 +51,9 @@ def _candidate_icon_paths() -> tuple[Path, ...]:
     """Return the paths where the bundled app icon may live.
 
     Order matters: PyInstaller onefile extracts data into ``sys._MEIPASS``,
-    then the source-tree location, then the working directory. PNG is
-    preferred: the Flet (Flutter) client does not render SVG files.
+    then the source-tree location, then the working directory. The ``.ico``
+    is listed first as the native Windows window icon, then PNG for the
+    header logo (the Flet/Flutter client does not render SVG files).
     """
     roots = [
         Path(getattr(sys, "_MEIPASS", None)) if getattr(sys, "_MEIPASS", None) else None,
@@ -62,9 +64,22 @@ def _candidate_icon_paths() -> tuple[Path, ...]:
     for root in roots:
         if root is None:
             continue
+        candidates.append(root / "assets" / "icon.ico")
         candidates.append(root / "assets" / "icon.png")
         candidates.append(root / "assets" / "icon.svg")
     return tuple(dict.fromkeys(candidates))
+
+
+def _window_icon_path() -> str | None:
+    """Return the first existing icon path usable for the OS window.
+
+    Returns:
+        Absolute path of the window icon, or None if none is available.
+    """
+    for icon_path in _candidate_icon_paths():
+        if icon_path.is_file():
+            return str(icon_path)
+    return None
 
 
 def _app_icon_bytes() -> bytes | None:
@@ -231,10 +246,16 @@ async def _build_ui(page: Page) -> None:
         page: The Flet page to render the UI into.
     """
     _lg.debug(f"Building UI for session...")
+    _ui_build_start = time.perf_counter()
 
     page.title = "ywallhaven"
     page.padding = 12
     page.bgcolor = Colors.SURFACE
+    # Best-effort native window icon (unsupported on some hosts).
+    window_icon = _window_icon_path()
+    if window_icon:
+        _lg.debug(f"Setting window icon to {window_icon}.")
+        page.window.icon = window_icon
     # Apply theme from registry (supports builtin + user themes)
     try:
         applied = apply_theme(page, config.data.THEME)
@@ -511,6 +532,10 @@ async def _build_ui(page: Page) -> None:
     )
     page.overlay.append(settings_panel)
 
+    _lg.debug(
+        f"UI assembled in "
+        f"{(time.perf_counter() - _ui_build_start) * 1000:.0f} ms."
+    )
     _lg.info(
         f"UI ready: theme={config.data.THEME}, "
         f"check_updates={config.data.CHECK_UPDATES}."
