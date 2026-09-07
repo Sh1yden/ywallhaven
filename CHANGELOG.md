@@ -43,6 +43,13 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.8] - 2026-09-06
+
+### Исправлено
+
+- Роллинг обоев ломался: `middle_panel` `load_more` (`middle_panel.py:110`) `502 Bad Gateway` (`wallhaven_api.py:88`) маскировался как `No more wallpapers found` → `has_more=False` и пустая сетка. `wallhaven_api` теперь пробрасывает `429/502/503/504` как `raise` (warning `Transient`), `middle_panel` ретрай `page.run_task(_retry_with_delay 1.0)` без `has_more=False`.
+- Превью миниатюр `middle_panel.py:182` теперь `Image(error_content=Icon(BROKEN_IMAGE))` fallback при `th.wallhaven.cc` `statusCode 0`.
+
 ## [0.8.7] - 2026-09-06
 
 ### Исправлено
@@ -356,7 +363,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.8...HEAD
+[0.8.8]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...v0.8.5

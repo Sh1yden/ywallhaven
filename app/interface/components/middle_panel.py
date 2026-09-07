@@ -9,6 +9,8 @@ from flet import (
     Container,
     Colors,
     ClipBehavior,
+    Icon,
+    Icons,
     Image,
     BoxFit,
     OnScrollEvent,
@@ -123,7 +125,21 @@ class MiddlePanel(GridView, LoggerMixin):
                 self.update()
             except Exception as e:
                 if generation == self._generation:
-                    self._lg.critical(f"Internal error: {e}.")
+                    # Transient 502/503 etc — retry, don't kill pagination
+                    msg = str(e).lower()
+                    is_transient = any(
+                        s in msg for s in ("502", "503", "429", "500", "bad gateway")
+                    ) or "transient" in msg
+                    if is_transient:
+                        self._lg.warning(f"Transient load error, retrying: {e}")
+                        self.page.run_task(self._retry_with_delay, 1.0)
+                    else:
+                        self._lg.critical(f"Internal error: {e}.")
+
+    async def _retry_with_delay(self, delay: float) -> None:
+        """Retry load_more after delay."""
+        await asyncio.sleep(delay)
+        await self.load_more()
 
     async def _retry_load(self) -> None:
         """Wait a bit and retry loading after a stale request."""
@@ -183,6 +199,7 @@ class MiddlePanel(GridView, LoggerMixin):
             src=wallpaper["thumbs"]["small"],
             fit=BoxFit.COVER,
             border_radius=12,
+            error_content=Icon(Icons.BROKEN_IMAGE, color=Colors.OUTLINE_VARIANT, size=24),
         )
         return GestureDetector(
             data=index,

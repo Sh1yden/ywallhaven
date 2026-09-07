@@ -102,6 +102,13 @@ class WallhavenAPI(LoggerMixin):
             )
             return items
         except HTTPError as e:
+            # Transient 502/503/429 should be retried, not treated as "no more"
+            status = getattr(getattr(e, "response", None), "status_code", 0)
+            if status in (429, 502, 503, 504):
+                self._lg.warning(
+                    f"Transient Wallhaven error {status}: {e} — will retry"
+                )
+                raise
             self._lg.error(f"Error by req to Wallhaven: {e}.")
             return []
 
