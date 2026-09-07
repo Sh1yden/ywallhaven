@@ -85,6 +85,35 @@ def _app_icon_bytes() -> bytes | None:
     return None
 
 
+def _bind_file_pickers(page: Page) -> tuple[FilePicker, FilePicker]:
+    """Create the save + theme import pickers and keep them alive.
+
+    In flet 0.86+ ``FilePicker`` is a service: constructing it registers
+    the instance into ``page._services`` automatically, and it must not
+    be added to ``page.overlay`` -- the client has no widget for
+    ``FilePicker`` and renders "unknown control: FilePicker" if it is
+    placed into the page control tree. The session also garbage-collects
+    services with too few strong references after every event, so both
+    pickers are pinned as page attributes for the whole session.
+
+    Args:
+        page: The Flet page to attach the pickers to.
+
+    Returns:
+        The save and theme pickers.
+    """
+    file_picker = FilePicker()
+    theme_picker = FilePicker()
+    page._ywallhaven_file_picker = file_picker
+    page._ywallhaven_theme_picker = theme_picker
+    _lg.info(
+        f"FilePicker services bound: save={file_picker} "
+        f"theme={theme_picker} (registered into page._services, "
+        "not page.overlay)."
+    )
+    return file_picker, theme_picker
+
+
 def _log_flet_client_diagnostics() -> None:
     """Log and auto-clean corrupted Flet desktop client cache.
 
@@ -248,29 +277,7 @@ async def _build_ui(page: Page) -> None:
 
     page.on_disconnect = on_disconnect
 
-    # FilePicker creation + overlay with detailed logging (до page.add) — 2 пикера: file_picker для save, theme_picker для pick
-    try:
-        from flet.version import flet_version
-
-        _lg.info(f"FilePicker init start: flet_version={flet_version}")
-    except Exception:
-        _lg.info("FilePicker init start: flet_version=unknown")
-    _lg.debug(f"overlay before FilePicker: {[type(s).__name__ for s in page.overlay]}")
-    try:
-        file_picker = FilePicker()
-        theme_picker = FilePicker()
-        _lg.info(f"FilePicker created: file_picker={file_picker} theme_picker={theme_picker}")
-    except Exception as e:
-        _lg.critical(f"FilePicker init failed at flet_app.py:241", exc_info=True)
-        raise
-    try:
-        page.overlay.append(file_picker)
-        page.overlay.append(theme_picker)
-        _lg.info(f"FilePicker appended to overlay, now {[type(s).__name__ for s in page.overlay]}")
-    except Exception as e:
-        _lg.critical(f"FilePicker overlay append failed at flet_app.py:242", exc_info=True)
-        raise
-    _lg.debug(f"overlay services: {[type(s).__name__ for s in page.overlay]}")
+    file_picker, theme_picker = _bind_file_pickers(page)
     _log_flet_client_diagnostics()
 
     async def save_wallpaper(

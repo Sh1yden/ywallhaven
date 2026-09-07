@@ -43,6 +43,12 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.9] - 2026-09-06
+
+### Исправлено
+
+- `unknown control: FilePicker` и `TimeoutException FilePicker.save_file` (`flet_app.py:88`, `app/main.py:108`): `FilePicker` в `flet==0.86.4` — `Service`, а не `control`, регистрация через `page._services` (`service.py:16`), `page.overlay.append` даёт `unknown control`. Пикеры больше не в `page.overlay`, регистрация через `_bind_file_pickers` с пиннингом `page._ywallhaven_file_picker/_theme_picker` (2 сильные ссылки против `unregister_services` GC). Откачен `AppView.WEB_BROWSER` → `AppView.FLET_APP` (`app/main.py:108`).
+
 ## [0.8.8] - 2026-09-06
 
 ### Исправлено
@@ -363,7 +369,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.9...HEAD
+[0.8.9]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...v0.8.6
