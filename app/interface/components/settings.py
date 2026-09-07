@@ -236,6 +236,10 @@ class SettingsPanel(Container):
 
     async def _on_import_theme(self, e) -> None:
         """Open file picker for theme JSON."""
+        _lg.debug(
+            f"FilePicker pick_files start at settings.py:237 "
+            f"overlay={[type(s).__name__ for s in self.page.overlay]} web={getattr(self.page, 'web', False)}"
+        )
         try:
             files = await self._theme_picker.pick_files(
                 dialog_title="Import theme JSON",
@@ -243,10 +247,16 @@ class SettingsPanel(Container):
                 file_type=FilePickerFileType.CUSTOM,
                 allow_multiple=False,
             )
+            _lg.debug(f"FilePicker pick_files returned {files!r} at settings.py:237")
             if files:
                 await self._handle_theme_files(files)
+            else:
+                _lg.info("FilePicker pick_files cancelled at settings.py:237")
         except Exception as ex:
-            _lg.warning(f"Import picker failed: {ex}")
+            _lg.error(
+                f"Import picker failed at settings.py:237 overlay={[type(s).__name__ for s in self.page.overlay]} web={getattr(self.page, 'web', False)}",
+                exc_info=True,
+            )
             self.page.show_dialog(
                 SnackBar(
                     content=Text(f"Import failed: {ex}"),

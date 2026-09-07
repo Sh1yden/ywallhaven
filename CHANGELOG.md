@@ -43,6 +43,12 @@
 - [ ] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [ ] Получше залогировать приложение
 
+## [0.8.6] - 2026-09-06
+
+### Исправлено
+
+- Улучшена логируемость `FilePicker` и отлов `unknown control: FilePicker` там, где он используется (по запросу): `flet_app.py:241` создание `FilePicker()` + `page.overlay.append` с логом `flet_version`/`overlay before/after`/`uid` и `exc_info`, `flet_app.py:220` `on_page_error` с проверкой `FilePicker`/`unknown control` и логом `overlay`+`exc_info`, `flet_app.py:304` `save_file` и `settings.py:237` `pick_files` с логом `overlay`/`web` и `exc_info` до/после вызова.
+
 ## [0.8.5] - 2026-09-06
 
 ### Исправлено
@@ -344,7 +350,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.2...v0.8.3

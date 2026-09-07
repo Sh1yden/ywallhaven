@@ -223,7 +223,15 @@ async def _build_ui(page: Page) -> None:
         Args:
             e: Error event from the Flet client.
         """
-        _lg.critical(f"Page error: {e}.")
+        msg = str(getattr(e, "data", e))
+        if "FilePicker" in msg or "unknown control" in msg.lower():
+            _lg.critical(
+                f"FilePicker unknown control at flet_app.py:220 "
+                f"overlay={[type(s).__name__+':'+str(getattr(s, 'uid', '?')) for s in page.overlay]} msg={msg} e={e}",
+                exc_info=True,
+            )
+        else:
+            _lg.critical(f"Page error: {e}", exc_info=True)
 
     page.on_error = on_page_error
 
@@ -238,8 +246,26 @@ async def _build_ui(page: Page) -> None:
 
     page.on_disconnect = on_disconnect
 
-    file_picker = FilePicker()
-    page.overlay.append(file_picker)
+    # FilePicker creation + overlay with detailed logging (до page.add)
+    try:
+        from flet.version import flet_version
+
+        _lg.info(f"FilePicker init start: flet_version={flet_version}")
+    except Exception:
+        _lg.info("FilePicker init start: flet_version=unknown")
+    _lg.debug(f"overlay before FilePicker: {[type(s).__name__ for s in page.overlay]}")
+    try:
+        file_picker = FilePicker()
+        _lg.info(f"FilePicker created: {file_picker} uid={getattr(file_picker, 'uid', '?')}")
+    except Exception as e:
+        _lg.critical(f"FilePicker init failed at flet_app.py:241", exc_info=True)
+        raise
+    try:
+        page.overlay.append(file_picker)
+        _lg.info(f"FilePicker appended to overlay, now {[type(s).__name__ for s in page.overlay]}")
+    except Exception as e:
+        _lg.critical(f"FilePicker overlay append failed at flet_app.py:242", exc_info=True)
+        raise
     _lg.debug(f"overlay services: {[type(s).__name__ for s in page.overlay]}")
     _log_flet_client_diagnostics()
 
@@ -274,6 +300,10 @@ async def _build_ui(page: Page) -> None:
                 _lg.debug(f"Wallpaper resized to {size[0]}x{size[1]}.")
 
         saved = None
+        _lg.debug(
+            f"FilePicker save_file start at flet_app.py:304 "
+            f"overlay={[type(s).__name__ for s in page.overlay]} web={getattr(page, 'web', False)} file={file_name}"
+        )
         try:
             saved = await file_picker.save_file(
                 dialog_title="Save wallpaper",
@@ -282,8 +312,12 @@ async def _build_ui(page: Page) -> None:
                 allowed_extensions=["jpg", "png", "gif", "webp", "bmp"],
                 src_bytes=data,
             )
+            _lg.debug(f"FilePicker save_file returned {saved!r} at flet_app.py:304")
         except Exception as e:
-            _lg.error(f"Save dialog failed: {e}.", exc_info=True)
+            _lg.error(
+                f"Save dialog failed at flet_app.py:304 overlay={[type(s).__name__ for s in page.overlay]} web={getattr(page, 'web', False)}",
+                exc_info=True,
+            )
             _show_snack(page, "Save failed", is_error=True)
             return
 
