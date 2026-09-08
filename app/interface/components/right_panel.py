@@ -272,7 +272,7 @@ class RightPanel(Container):
         self._dialog_barrier = barrier
         self.page.overlay.append(barrier)
         self.page.overlay.append(dialog)
-        self.page.overlay.update()
+        self.page.update()
 
         if not width or not height:
             self.page.run_task(
@@ -350,7 +350,7 @@ class RightPanel(Container):
             overlay.remove(dialog)
         if barrier is not None and barrier in overlay:
             overlay.remove(barrier)
-        overlay.update()
+        self.page.update()
 
     def _resolution_option(
         self,

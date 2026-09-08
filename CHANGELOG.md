@@ -43,6 +43,16 @@
 - [x] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [x] Получше залогировать приложение
 
+## [0.9.1] - 2026-09-07
+
+### Исправлено
+
+- Диалог выбора разрешения (`right_panel.py:272`): `page.overlay.update()` → `page.update()` для корректного закрытия барабана и диалога по клику вне.
+
+### Изменено
+
+- Версия bump `0.9.0` → `0.9.1` (стабилизация релиза, обновление `changelog`).
+
 ## [0.9.0] - 2026-09-07
 
 ### Добавлено
@@ -403,8 +413,9 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.1...HEAD
 [0.9.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.9...v0.9.0
+[0.9.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.0...v0.9.1
 [0.8.9]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...v0.8.7
