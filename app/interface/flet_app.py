@@ -64,9 +64,9 @@ def _candidate_icon_paths() -> tuple[Path, ...]:
     for root in roots:
         if root is None:
             continue
-        candidates.append(root / "assets" / "icon.ico")
-        candidates.append(root / "assets" / "icon.png")
-        candidates.append(root / "assets" / "icon.svg")
+        candidates.append(root / "docs" / "assets" / "icon.ico")
+        candidates.append(root / "docs" / "assets" / "icon.png")
+        candidates.append(root / "docs" / "assets" / "icon.svg")
     return tuple(dict.fromkeys(candidates))
 
 
@@ -86,7 +86,7 @@ def _app_icon_bytes() -> bytes | None:
     """Read the bundled app icon as bytes for the header logo.
 
     Returns:
-        Parsed raw bytes of assets/icon.svg, or None if unavailable.
+        Parsed raw bytes of docs/assets/icon.svg, or None if unavailable.
     """
     for icon_path in _candidate_icon_paths():
         try:

@@ -181,3 +181,52 @@ class JSONFormatter(logging.Formatter):
             log_entry["exception"] = self.formatException(record.exc_info)
 
         return json.dumps(log_entry, ensure_ascii=False)
+
+
+def get_updater_logger(
+    log_dir: Path = Path("logs"),
+) -> logging.Logger:
+    """Return the dedicated updater logger with its own JSONL file.
+
+    The updater pipeline logs into ``updater-YYYY-MM-DD-NN.jsonl`` in
+    the application log directory, using the same JSON formatter and
+    the logging level from the main config. Messages still propagate
+    to the main application log for cross-correlation.
+
+    Args:
+        log_dir: Directory where the updater log file is stored.
+
+    Returns:
+        Logger named ``ywallhaven.updater`` with a dedicated handler.
+    """
+    from app.core.config import config as _config  # lazy: avoid a cycle
+
+    logger = logging.getLogger("ywallhaven.updater")
+
+    for handler in logger.handlers:
+        if getattr(handler, "_ywallhaven_updater_file", False):
+            return logger
+
+    level = getattr(
+        logging, _config.data.LOG_LVL.upper(), logging.WARNING
+    )
+
+    log_dir.mkdir(parents=True, exist_ok=True)
+    base_name = f"updater-{datetime.now().strftime('%Y-%m-%d')}"
+    filename = f"{base_name}-01.jsonl"
+    filepath = log_dir / filename
+    counter = 1
+    while filepath.exists():
+        counter += 1
+        filename = f"{base_name}-{counter:02d}.jsonl"
+        filepath = log_dir / filename
+
+    handler = logging.FileHandler(filepath, encoding="utf-8")
+    handler.setLevel(level)
+    handler.setFormatter(JSONFormatter())
+    handler._ywallhaven_updater_file = True
+    logger.addHandler(handler)
+    logger.setLevel(level)
+    logger.propagate = True
+
+    return logger

@@ -23,11 +23,13 @@ from flet import (
 
 from app.core import get_logger
 from app.core.error_handling import guard
+from app.core.logger_config import get_updater_logger
 from app.core.version import __version__
 from app.schemas import ReleaseInfo
 from app.service import UpdaterService
 
 _lg = get_logger()
+_upd_lg = get_updater_logger()
 
 _check_lock = asyncio.Lock()
 _startup_checked = False
@@ -80,6 +82,7 @@ async def check_and_offer(page: Any, *, manual: bool = False) -> None:
             return
 
         _lg.info(f"Offering update to {release.version}.")
+        _upd_lg.info(f"Update {release.version} offered to the user.")
         UpdateDialog(page, updater, release).open()
 
 
@@ -201,6 +204,9 @@ class UpdateDialog:
             e: Click event.
         """
         _lg.info(f"Update to {self.release.version} accepted by the user.")
+        _upd_lg.info(
+            f"Update to {self.release.version} accepted by the user."
+        )
         if self._busy:
             return
         self._busy = True
@@ -250,6 +256,7 @@ class UpdateDialog:
 
         asset = self.updater.find_asset(self.release)
         if asset is None:
+            _upd_lg.error("Release asset disappeared; aborting.")
             self._set_error("release asset disappeared")
             return
 
@@ -257,15 +264,22 @@ class UpdateDialog:
         self._status.update()
         if not self.updater.verify_sha256(path, asset):
             path.unlink(missing_ok=True)
+            _upd_lg.error("Checksum mismatch; update aborted.")
             self._set_error("checksum mismatch")
             return
+        _upd_lg.info("Update checksum verified (sha256).")
 
         self._status.value = "Restarting..."
         self._status.update()
         if not self.updater.launch_updater(path):
+            reason = getattr(
+                self.updater, "last_launch_error", ""
+            ) or "updater helper unavailable"
+            _upd_lg.error(f"Updater helper launch failed: {reason}")
             path.unlink(missing_ok=True)
-            self._set_error("updater helper unavailable")
+            self._set_error(f"updater helper unavailable ({reason})")
             return
+        _upd_lg.info("Updater helper launched; restart pending.")
 
         await self.updater.close()
         await self.page.window.destroy()
@@ -284,6 +298,11 @@ class UpdateDialog:
             progress=self._on_progress,
         )
         if path is None:
+            _upd_lg.error("Update download failed; aborting.")
             self._set_error("download failed")
             return None
+        _upd_lg.debug(
+            f"Update file ready: {path} "
+            f"({path.stat().st_size if path.exists() else 0} bytes)."
+        )
         return path

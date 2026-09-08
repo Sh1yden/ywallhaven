@@ -12,12 +12,14 @@ from httpx import AsyncClient, HTTPError
 from packaging.version import InvalidVersion, Version
 
 from app.core import LoggerMixin, config, get_logger
+from app.core.logger_config import get_updater_logger
 from app.core.version import __version__
 from app.schemas import AssetInfo, ReleaseInfo
 
 ProgressCallback = Callable[[int, int], None]
 
 _lg = get_logger()
+_upd_lg = get_updater_logger()
 
 
 class UpdaterError(Exception):
@@ -59,6 +61,8 @@ class UpdaterService(LoggerMixin):
             if check_prereleases is None
             else check_prereleases
         )
+
+        self.last_launch_error = ""
 
         self.client = AsyncClient(
             base_url=self.API_URL,
@@ -200,6 +204,9 @@ class UpdaterService(LoggerMixin):
             async with self.client.stream("GET", asset.url, follow_redirects=True) as response:
                 response.raise_for_status()
                 total = int(response.headers.get("content-length", 0))
+                _upd_lg.debug(
+                    f"Download started: {asset.url}, total={total} bytes."
+                )
 
                 with open(target, "wb") as f:
                     last_percent = -1
@@ -217,6 +224,9 @@ class UpdaterService(LoggerMixin):
                                     f"({downloaded}/{total} bytes)."
                                 )
             self._lg.info(f"Downloaded {downloaded} bytes -> {target}.")
+            _upd_lg.info(
+                f"Update downloaded: {downloaded} bytes -> {target}."
+            )
             return target
         except HTTPError as e:
             self._lg.error(f"Download failed: {e}.")
@@ -258,11 +268,13 @@ class UpdaterService(LoggerMixin):
 
         matches = sha256.hexdigest() == digest
         if matches:
-            _lg.debug("Checksum verified (sha256 matches).")
+            _upd_lg.debug(
+                f"Checksum verified for {path} (sha256 matches)."
+            )
         else:
-            _lg.warning(
-                "Checksum mismatch for the downloaded executable "
-                f"(expected sha256:{digest})."
+            _upd_lg.error(
+                f"Checksum mismatch for {path}:"
+                f" expected sha256:{digest}."
             )
         return matches
 
@@ -275,39 +287,74 @@ class UpdaterService(LoggerMixin):
             downloaded: Verified path of the new executable.
 
         Returns:
-            True when the helper was started successfully.
+            True when the helper was started successfully. On failure
+            the concrete reason is stored in ``last_launch_error``.
         """
-        if not getattr(sys, "frozen", False):
+        self.last_launch_error = ""
+        exe_path = Path(sys.executable).resolve()
+        frozen = getattr(sys, "frozen", False)
+
+        _upd_lg.debug(
+            "launch_updater:"
+            f" frozen={frozen}, executable={exe_path},"
+            f" downloaded={downloaded}"
+        )
+
+        if not frozen:
             self._lg.error(
                 "Cannot apply an update when running from sources."
             )
+            _upd_lg.error(
+                "Cannot apply an update when running from sources."
+            )
+            self.last_launch_error = (
+                "not a packaged build (running from sources)"
+            )
             return False
 
-        exe_path = Path(sys.executable).resolve()
         if downloaded.resolve() == exe_path:
             self._lg.error("Refusing to update with the same file.")
+            _upd_lg.error(
+                f"Refusing to update: {downloaded} equals {exe_path}."
+            )
+            self.last_launch_error = (
+                "downloaded file equals the running executable"
+            )
             return False
 
         helper = exe_path.parent / "ywallhaven-updater.exe"
+        _upd_lg.debug(f"Expecting updater helper at: {helper}.")
         if not helper.is_file():
             self._lg.error(f"Updater helper not found: {helper}.")
+            _upd_lg.error(f"Updater helper not found: {helper}.")
+            self.last_launch_error = f"updater helper not found: {helper}"
             return False
 
         log_path = exe_path.parent / "ywallhaven_updater.log"
-        # Diagnostic: ensure file exists and is not about to be cleaned
+        # Diagnostic: ensure the file exists before handing it over.
         try:
             exists = downloaded.is_file()
             size = downloaded.stat().st_size if exists else 0
-            self._lg.debug(
-                f"Updater src check: exists={exists}, size={size}, path={downloaded}"
+            _upd_lg.debug(
+                "Updater src check:"
+                f" exists={exists}, size={size}, path={downloaded}"
             )
             if not exists:
                 # List temp dir for debugging
-                tmp_files = list(Path(gettempdir()).glob("ywallhaven-*-update.exe"))
+                tmp_files = list(
+                    Path(gettempdir()).glob("ywallhaven-*-update.exe")
+                )
                 self._lg.error(f"Temp update files present: {tmp_files}")
+                _upd_lg.error(
+                    f"Downloaded file disappeared: {downloaded}."
+                    f" Leftover update files: {tmp_files}"
+                )
+                self.last_launch_error = (
+                    "downloaded file disappeared before launch"
+                )
                 return False
         except Exception as e:
-            self._lg.warning(f"Updater src check failed: {e}")
+            _upd_lg.warning(f"Updater src check failed: {e}")
 
         command = [
             str(helper),
@@ -317,6 +364,7 @@ class UpdaterService(LoggerMixin):
             "--log", str(log_path),
             "--restart",
         ]
+        _upd_lg.debug(f"Launching updater helper: {command}")
         try:
             Popen(
                 command,
@@ -325,10 +373,13 @@ class UpdaterService(LoggerMixin):
                     0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
                 ),
             )
+            _upd_lg.info("Updater helper started; shutting down...")
             self._lg.info("Updater helper started; shutting down...")
             return True
         except OSError as e:
             self._lg.error(f"Failed to start the updater helper: {e}.")
+            _upd_lg.error(f"Failed to start the updater helper: {e}.")
+            self.last_launch_error = f"failed to start updater helper: {e}"
             return False
 
     async def __aenter__(self) -> "UpdaterService":

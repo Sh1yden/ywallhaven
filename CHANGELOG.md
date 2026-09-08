@@ -5,7 +5,7 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
-## [Unreleased]
+## [Released]
 
 ### Планируется
 
@@ -40,8 +40,42 @@
 - [x] Изменить иконку собранного exe на свою
 - [x] Изменить иконку запущенного приложения со стандартной на свою
 - [x] Добавить закрытие всплывающих меню по клику вне его(исключительно меню скачки картинки, когда выбираешь его разрешения)
+    - [x] Фиксануть кнопки cancel, потому что после этой фичи они перестали работать
 - [x] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [x] Получше залогировать приложение
+
+## [0.9.2] - 2026-09-09
+
+### Исправлено
+
+- Диалог выбора разрешения переведён с ручного барана `page.overlay` на
+  управляемый `page.show_dialog()`/`pop_dialog()` с `barrier_color=TRANSPARENT`
+  и `on_dismiss` (`right_panel.py`): кнопки Cancel снова работают, закрытие
+  по клику вне — через штатный dismiss диалога.
+- Диалог обновления показывает конкретную причину отказа запуска хелпера:
+  `updater helper unavailable (<причина>)` вместо общего сообщения.
+
+### Добавлено
+
+- Отдельный лог апдейтера `get_updater_logger()` (`logger_config.py`):
+  собственный JSONL-файл `updater-YYYY-MM-DD-NN.jsonl`, уровень лога из
+  конфига, сообщения продолжают копиться и в основной лог.
+- `UpdaterService.last_launch_error` — конкретная причина отказа запуска
+  хелпера (не frozen, файл равен текущему exe, helper не найден, файл
+  пропал до запуска, `OSError`); подробные debug/info/error логи всего
+  пайплайна обновления: скачивание (start/done), проверка sha256,
+  запуск helper (`updater.py`, `update_dialog.py`).
+- Тесты: `last_launch_error`, запуск helper (мок `Popen`), отдельный
+  файл updater-лога (`tests/test_updater.py`).
+
+### Изменено
+
+- `flet` `0.86.4` → `0.86.5` (`pyproject.toml`, `uv.lock`).
+- Иконки переехали `assets/` → `docs/assets/` (`flet_app.py`,
+  `scripts/build.py`, `ywallhaven.spec`, `.gitignore`).
+- README переписан: галерея скриншотов тем, установка, разделы для
+  разработчиков, структура конфига; добавлены `docs/` и
+  `docs/SHOWING THEMES.md`.
 
 ## [0.9.1] - 2026-09-07
 
@@ -413,9 +447,10 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Unreleased]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.1...HEAD
-[0.9.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.9...v0.9.0
+[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.9...v0.9.0
 [0.8.9]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.6...v0.8.7

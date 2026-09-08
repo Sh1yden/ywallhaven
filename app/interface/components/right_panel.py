@@ -75,7 +75,6 @@ class RightPanel(Container):
         self._tags_fetch_generation = 0
         self._tags_expanded = False
         self._dialog: AlertDialog | None = None
-        self._dialog_barrier: Container | None = None
 
     def did_mount(self) -> None:
         """Create and mount the fullscreen layer above the page."""
@@ -247,6 +246,7 @@ class RightPanel(Container):
 
         dialog = AlertDialog(
             modal=False,
+            barrier_color=Colors.TRANSPARENT,
             title=Text("Download wallpaper"),
             actions_alignment=MainAxisAlignment.CENTER,
             actions=[
@@ -257,22 +257,14 @@ class RightPanel(Container):
                 spacing=8,
                 controls=controls,
             ),
+            on_dismiss=self._close_dialog,
         )
-        # Mount a transparent full-screen barrier behind the dialog so a
-        # click outside it closes it (AlertDialog has no dismissible
-        # barrier). Both live in page.overlay: barrier first, dialog on top.
+        # Dismissible non-modal dialog: a click outside it closes it via
+        # the managed on_dismiss handler, Cancel stops it directly. Both
+        # live in page._dialogs handled by show_dialog()/pop_dialog().
         self._close_dialog()
-        dialog.open = True
-        barrier = Container(
-            expand=True,
-            bgcolor=Colors.TRANSPARENT,
-            on_click=self._close_dialog,
-        )
         self._dialog = dialog
-        self._dialog_barrier = barrier
-        self.page.overlay.append(barrier)
-        self.page.overlay.append(dialog)
-        self.page.update()
+        self.page.show_dialog(dialog)
 
         if not width or not height:
             self.page.run_task(
@@ -334,23 +326,24 @@ class RightPanel(Container):
         return os.path.splitext(file_name)
 
     def _close_dialog(self, e=None) -> None:
-        """Close the resolution chooser and drop its background barrier.
+        """Close the resolution chooser dialog.
+
+        The dialog is managed by page.show_dialog()/pop_dialog(): an
+        outside click closes it through the managed on_dismiss handler,
+        the Cancel/resolution buttons close it directly.
 
         Args:
-            e: Optional click event from the cancel/barrier.
+            e: Optional click event from the cancel button or dismiss.
         """
-        overlay = self.page.overlay
-        dialog = self._dialog
-        barrier = self._dialog_barrier
+        if e is not None:
+            source = (
+                "cancel/resolution button"
+                if getattr(e, "control", None) is not None
+                else "dismiss (outside click)"
+            )
+            _lg.debug(f"Closing resolution dialog from {source}.")
         self._dialog = None
-        self._dialog_barrier = None
-
-        if dialog is not None and dialog in overlay:
-            dialog.open = False
-            overlay.remove(dialog)
-        if barrier is not None and barrier in overlay:
-            overlay.remove(barrier)
-        self.page.update()
+        self.page.pop_dialog()
 
     def _resolution_option(
         self,

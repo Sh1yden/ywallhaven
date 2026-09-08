@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import app.service.updater as updater_module
 from app.service import UpdaterError, UpdaterService
 from app.schemas import AssetInfo
 
@@ -320,7 +322,72 @@ async def test_launch_updater_refuses_from_sources():
     updater = make_updater([])
 
     assert updater.launch_updater(Path("/tmp/fake-update.exe")) is False
+    assert updater.last_launch_error == (
+        "not a packaged build (running from sources)"
+    )
     await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_reports_missing_helper(
+    monkeypatch, tmp_path
+):
+    updater = make_updater([])
+    fake_exe = tmp_path / "ywallhaven.exe"
+    fake_exe.write_bytes(b"app")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+    src = tmp_path / "new-update.exe"
+    src.write_bytes(b"new")
+
+    assert updater.launch_updater(src) is False
+    assert "updater helper not found" in updater.last_launch_error
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_starts_helper(monkeypatch, tmp_path):
+    updater = make_updater([])
+    fake_exe = tmp_path / "ywallhaven.exe"
+    helper = tmp_path / "ywallhaven-updater.exe"
+    src = tmp_path / "new-update.exe"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+
+    started: list[list[str]] = []
+    monkeypatch.setattr(
+        updater_module,
+        "Popen",
+        lambda command, **kwargs: started.append(command),
+    )
+
+    assert updater.launch_updater(src) is True
+    assert updater.last_launch_error == ""
+    assert started
+    assert "--pid" in started[0]
+    assert "--restart" in started[0]
+    await updater.close()
+
+
+def test_get_updater_logger_writes_dedicated_file(tmp_path):
+    from app.core.logger_config import get_updater_logger
+
+    logger = logging.getLogger("ywallhaven.updater")
+    logger.handlers.clear()
+
+    try:
+        get_updater_logger(log_dir=tmp_path)
+        logger.info("updater probe")
+
+        files = sorted(tmp_path.glob("updater-*.jsonl"))
+        assert files
+        assert "updater probe" in files[-1].read_text(encoding="utf-8")
+    finally:
+        logger.handlers.clear()
 
 
 # Standalone updater helper ----------------------------------------

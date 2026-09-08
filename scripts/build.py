@@ -6,7 +6,7 @@ Steps:
 1. Resolve the current version from the package metadata (hatch-vcs).
 2. Generate ``app/core/_version.py`` with the resolved version.
 3. Generate the Windows version info file ``build/version_info.txt``.
-4. Convert ``assets/icon.png`` to ``assets/icon.ico`` for the exe icon.
+4. Convert ``docs/assets/icon.png`` to ``docs/assets/icon.ico`` for the exe icon.
 5. Build ``ywallhaven.exe`` and ``ywallhaven-updater.exe`` via PyInstaller.
 """
 
@@ -20,8 +20,8 @@ from PIL import Image as PILImage
 ROOT = Path(__file__).resolve().parent.parent
 VERSION_MODULE = ROOT / "app" / "core" / "_version.py"
 VERSION_INFO = ROOT / "build" / "version_info.txt"
-ICON_PNG = ROOT / "assets" / "icon.png"
-ICON_ICO = ROOT / "assets" / "icon.ico"
+ICON_PNG = ROOT / "docs" / "assets" / "icon.png"
+ICON_ICO = ROOT / "docs" / "assets" / "icon.ico"
 SPECS = [
     ROOT / "ywallhaven.spec",
     ROOT / "ywallhaven-updater.spec",
