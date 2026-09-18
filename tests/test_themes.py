@@ -306,3 +306,72 @@ def test_apply_theme_sets_mode(monkeypatch) -> None:
     # fallback for unknown
     td3 = apply_theme(page, "unknown_xyz")
     assert td3.id == "dark_default"
+
+
+def test_build_theme_dd_list_failure_fallback(caplog, monkeypatch) -> None:
+    """Settings theme dropdown must fall back to defaults if list fails."""
+    import logging
+
+    import app.interface.themes as themes_mod
+    from app.interface.components.settings import SettingsPanel
+
+    def _boom():
+        raise RuntimeError("boom-list")
+
+    monkeypatch.setattr(themes_mod, "list_themes", _boom)
+    caplog.set_level(logging.DEBUG)
+
+    panel = SettingsPanel.__new__(SettingsPanel)
+    dd = panel._build_theme_dd()
+
+    keys = [o.key for o in dd.options]
+    assert "dark_default" in keys
+    assert any(
+        r.levelname == "WARNING"
+        and "Failed to list themes" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_apply_theme_dark_theme_failure_fallback(caplog) -> None:
+    """apply_theme must keep page.theme when dark_theme set fails."""
+    import logging
+
+    from app.interface.themes import apply_theme
+
+    class _PageStub:
+        def __init__(self):
+            self._theme = None
+            self.theme_mode = None
+            self.updated = False
+
+        @property
+        def theme(self):
+            return self._theme
+
+        @theme.setter
+        def theme(self, value):
+            self._theme = value
+
+        @property
+        def dark_theme(self):
+            return None
+
+        @dark_theme.setter
+        def dark_theme(self, value):
+            raise RuntimeError("boom-dark")
+
+        def update(self):
+            self.updated = True
+
+    caplog.set_level(logging.DEBUG, logger="ywallhaven")
+    page = _PageStub()
+    td = apply_theme(page, "dark_default")
+
+    assert td.id == "dark_default"
+    assert page.theme is not None
+    assert page.updated is False
+    assert any(
+        r.levelname == "DEBUG" and "dark_theme" in r.getMessage()
+        for r in caplog.records
+    )

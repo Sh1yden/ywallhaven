@@ -92,7 +92,8 @@ def apply_theme(page, theme_id: str) -> ThemeDefinition:
     try:
         page.theme = flet_theme
         page.dark_theme = flet_theme
-    except Exception:
+    except Exception as e:
+        _lg.debug(f"Failed to set dark_theme, fallback to theme only: {e}", exc_info=True)
         page.theme = flet_theme
 
     page.theme_mode = (
@@ -103,8 +104,8 @@ def apply_theme(page, theme_id: str) -> ThemeDefinition:
     try:
         if getattr(page, "_Control__uid", None) is not None:
             page.update()
-    except Exception:
-        pass
+    except Exception as e:
+        _lg.debug(f"Deferred theme update (page not mounted): {e}", exc_info=True)
 
     _lg.debug(f"Applied theme '{td.id}' mode={td.mode}")
     return td

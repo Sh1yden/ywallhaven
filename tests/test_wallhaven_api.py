@@ -73,11 +73,13 @@ async def test_search_omits_empty_optional_params():
 
 
 @pytest.mark.asyncio
-async def test_search_returns_empty_list_on_http_error():
+async def test_search_raises_on_non_transient_http_error():
+    """Non-transient failures (e.g. 500) raise so callers never mistake
+    an error for an empty page (end of feed)."""
     api = make_client(lambda request: httpx.Response(500))
-    result = await api.search_wallpapers()
+    with pytest.raises(httpx.HTTPError):
+        await api.search_wallpapers()
     await api.close()
-    assert result == []
 
 
 @pytest.mark.asyncio
@@ -149,6 +151,142 @@ async def test_get_wallpaper_retries_transient_then_succeeds():
     await api.close()
 
     assert result == detail
+
+
+def _capture_sleep(monkeypatch) -> list:
+    """Replace asyncio.sleep with a recorder (no real waiting)."""
+    delays: list = []
+
+    async def _fake_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    monkeypatch.setattr("app.service.wallhaven_api.asyncio.sleep", _fake_sleep)
+    return delays
+
+
+@pytest.mark.asyncio
+async def test_search_retries_429_then_succeeds(monkeypatch):
+    """A 429 must be retried (not raised immediately)."""
+    calls: list = []
+    responses = iter(
+        [httpx.Response(429), httpx.Response(200, json={"data": [WALLPAPER]})]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return next(responses)
+
+    api = make_client(handler)
+    delays = _capture_sleep(monkeypatch)
+    result = await api.search_wallpapers()
+    await api.close()
+
+    assert result == [WALLPAPER]
+    assert len(calls) == 2
+    assert len(delays) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_honors_retry_after(monkeypatch):
+    """Retry-After takes priority over the exponential backoff."""
+    responses = iter(
+        [
+            httpx.Response(429, headers={"Retry-After": "2"}),
+            httpx.Response(200, json={"data": [WALLPAPER]}),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    api = make_client(handler)
+    delays = _capture_sleep(monkeypatch)
+    result = await api.search_wallpapers()
+    await api.close()
+
+    assert result == [WALLPAPER]
+    assert delays == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_search_gives_up_after_max_retries(monkeypatch):
+    """Exhausted transient retries raise; attempts are bounded."""
+    calls: list = []
+    api = make_client(
+        lambda request: calls.append(request) or httpx.Response(503)
+    )
+    delays = _capture_sleep(monkeypatch)
+    with pytest.raises(httpx.HTTPError):
+        await api.search_wallpapers()
+    await api.close()
+
+    assert len(calls) == WallhavenAPI.MAX_RETRIES + 1
+    assert len(delays) == WallhavenAPI.MAX_RETRIES
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_honors_retry_after(monkeypatch):
+    """A 429 with Retry-After sleeps exactly the header value."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    responses = iter(
+        [
+            httpx.Response(429, headers={"Retry-After": "2"}),
+            httpx.Response(200, json={"data": detail}),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    api = make_client(handler)
+    delays = _capture_sleep(monkeypatch)
+    result = await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert result == detail
+    assert delays == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_fetch_bytes_retries_transient_then_succeeds(monkeypatch):
+    """fetch_bytes must retry transient errors like the other methods."""
+    calls: list = []
+    responses = iter([httpx.Response(503), httpx.Response(200, content=b"data")])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return next(responses)
+
+    api = make_client(handler)
+    delays = _capture_sleep(monkeypatch)
+    result = await api.fetch_bytes("https://example.com/w.jpg")
+    await api.close()
+
+    assert result == b"data"
+    assert len(calls) == 2
+    assert len(delays) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_bytes_honors_retry_after(monkeypatch):
+    """fetch_bytes sleeps the Retry-After value on 429."""
+    responses = iter(
+        [
+            httpx.Response(429, headers={"Retry-After": "3"}),
+            httpx.Response(200, content=b"data"),
+        ]
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return next(responses)
+
+    api = make_client(handler)
+    delays = _capture_sleep(monkeypatch)
+    result = await api.fetch_bytes("https://example.com/w.jpg")
+    await api.close()
+
+    assert result == b"data"
+    assert delays == [3.0]
 
 
 @pytest.mark.asyncio
@@ -235,3 +373,101 @@ def test_build_filename_falls_back_to_jpg():
         )
         == "w1.jpg"
     )
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_cache_expires_after_ttl():
+    """Expired entry must trigger a refetch instead of serving stale cache."""
+    first_detail = {**WALLPAPER, "tags": [{"name": "v1"}]}
+    second_detail = {**WALLPAPER, "tags": [{"name": "v2"}]}
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        data = second_detail if len(calls) == 2 else first_detail
+        return httpx.Response(200, json={"data": data})
+
+    api = make_client(handler)
+    first = await api.get_wallpaper("abc123")
+    assert first == first_detail
+    assert len(calls) == 1
+
+    # Age the stored entry past TTL directly (no real waiting).
+    ts, data = api._details_cache["abc123"]
+    api._details_cache["abc123"] = (
+        ts - (WallhavenAPI.DETAILS_CACHE_TTL + 100.0),
+        data,
+    )
+
+    second = await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert len(calls) == 2
+    assert second == second_detail
+    assert second != first
+
+
+@pytest.mark.asyncio
+async def test_get_wallpaper_returns_copy_not_alias():
+    """Mutating a returned dict must not corrupt the cached entry."""
+    detail = {**WALLPAPER, "tags": [{"name": "nature"}]}
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"data": detail})
+
+    api = make_client(handler)
+    first = await api.get_wallpaper("abc123")
+    first["tags"].append({"name": "evil"})
+    first["id"] = "hacked"
+    first["purity"] = "nsfw"
+
+    second = await api.get_wallpaper("abc123")
+    await api.close()
+
+    assert len(calls) == 1
+    assert second["id"] == "abc123"
+    assert "purity" not in second
+    assert second["tags"] == [{"name": "nature"}]
+    assert all(t.get("name") != "evil" for t in second["tags"])
+
+
+@pytest.mark.asyncio
+async def test_cache_details_prunes_expired_on_set():
+    """_cache_details must drop expired entries when storing a new one."""
+    calls: list = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        return httpx.Response(200, json={"data": WALLPAPER})
+
+    api = make_client(handler)
+    stale_data = {"id": "stale-id", "tags": [{"name": "stale"}]}
+    fresh_data = {"id": "fresh-id", "tags": [{"name": "fresh"}]}
+    new_data = {"id": "new-id", "tags": [{"name": "new"}]}
+
+    api._cache_details("stale-id", stale_data)
+    api._cache_details("fresh-id", fresh_data)
+    assert len(api._details_cache) == 2
+
+    # Age only the stale entry past TTL (no real waiting).
+    ts, data = api._details_cache["stale-id"]
+    api._details_cache["stale-id"] = (
+        ts - (WallhavenAPI.DETAILS_CACHE_TTL + 100.0),
+        data,
+    )
+
+    api._cache_details("new-id", new_data)
+
+    assert "stale-id" not in api._details_cache
+    assert "fresh-id" in api._details_cache
+    assert "new-id" in api._details_cache
+    assert len(api._details_cache) == 2
+
+    # Fresh entry must still be served from cache without network.
+    fresh = await api.get_wallpaper("fresh-id")
+    await api.close()
+
+    assert fresh == fresh_data
+    assert len(calls) == 0

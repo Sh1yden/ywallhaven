@@ -1,6 +1,7 @@
 """Right panel: preview and properties of the selected wallpaper."""
 
 import os
+import sys
 import time
 from typing import Any, Callable, Dict, List
 
@@ -54,9 +55,11 @@ class RightPanel(Container):
         on_download: Callable[[str, str, tuple[int, int] | None], None],
         on_tag_click: Callable[[str], None] | None = None,
         on_navigate: Callable[[int, int | None], Any] | None = None,
+        on_set_wallpaper: Callable[[str], Any] | None = None,
     ) -> None:
         super().__init__()
         self._on_download = on_download
+        self._on_set_wallpaper = on_set_wallpaper
         self._on_tag_click = on_tag_click
         self._on_navigate = on_navigate
         self._api_client = WallhavenAPI()
@@ -158,7 +161,8 @@ class RightPanel(Container):
         self._tags_fetch_generation = generation
         try:
             detail = await self._api_client.get_wallpaper(wallpaper_id)
-        except Exception:
+        except Exception as e:
+            _lg.warning(f"Failed to fetch tags for {wallpaper_id}: {e}", exc_info=True)
             return
 
         if generation != self._tags_fetch_generation:
@@ -183,18 +187,35 @@ class RightPanel(Container):
         self.update()
 
     def _build_download_button(self) -> Container:
-        """Build the download button shown below the properties.
+        """Build the download row with the set-as-wallpaper button.
 
-        C3: Sticky container with elevated button.
+        C3: Sticky container with the expanded download button plus the
+        Windows-only wallpaper button. On non-Windows the wallpaper
+        button is omitted entirely (not just disabled).
         """
+        download = FilledButton(
+            content="Download",
+            icon=Icons.DOWNLOAD,
+            height=48,
+            expand=True,
+            on_click=self._handle_download_click,
+        )
+        controls: List[Any] = [download]
+        if sys.platform == "win32":
+            controls.append(
+                IconButton(
+                    icon=Icons.WALLPAPER,
+                    tooltip="Set as Wallpaper",
+                    icon_size=22,
+                    on_click=self._handle_wallpaper_click,
+                ),
+            )
         return Container(
             padding=Padding(top=8, right=0, bottom=0, left=0),
-            content=FilledButton(
-                content="Download",
-                icon=Icons.DOWNLOAD,
-                height=48,
-                expand=True,
-                on_click=self._handle_download_click,
+            content=Row(
+                spacing=8,
+                vertical_alignment="center",
+                controls=controls,
             ),
         )
 
@@ -205,6 +226,23 @@ class RightPanel(Container):
             e: Click event from the download button.
         """
         self.request_download(self._last_wallpaper)
+
+    def _handle_wallpaper_click(self, e) -> None:
+        """Set the current wallpaper as the desktop background.
+
+        Windows only (the button is hidden elsewhere). The async
+        installer is scheduled via page.run_task.
+
+        Args:
+            e: Click event from the wallpaper button.
+        """
+        wallpaper = self._last_wallpaper
+        if wallpaper is None or self._on_set_wallpaper is None:
+            return
+        url = wallpaper.get("path") or ""
+        if not url:
+            return
+        self.page.run_task(self._on_set_wallpaper, url)
 
     def request_download(
         self, wallpaper: Dict[str, Any] | None

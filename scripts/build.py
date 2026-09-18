@@ -38,7 +38,8 @@ def resolve_version() -> str:
         from app.core.version import __version__
 
         return __version__
-    except Exception:
+    except Exception as e:
+        print(f"Version resolve failed ({e}), fallback to git describe", file=sys.stderr)
         # Fallback when the environment is not yet synced.
         result = subprocess.run(
             ["git", "describe", "--tags", "--always"],

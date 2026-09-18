@@ -54,12 +54,9 @@ class Config(LoggerMixin):
             if raw_dict.get("THEME") in legacy_map:
                 raw_dict["THEME"] = legacy_map[raw_dict["THEME"]]
                 # persist migration silently, fallback to save later
-                try:
-                    self._lg.info(
-                        f"Migrated legacy THEME to {raw_dict['THEME']}"
-                    )
-                except Exception:
-                    pass
+                self._lg.info(
+                    f"Migrated legacy THEME to {raw_dict['THEME']}"
+                )
             return ConfigSchema(**raw_dict)
         except (json.JSONDecodeError, ValidationError) as e:
             self._lg.warning(f"Config corrupted ({e}). Recreating default...")

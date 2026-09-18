@@ -43,6 +43,10 @@ from app.interface.components import (
 )
 from app.interface.components.update_dialog import check_and_offer
 from app.interface.themes import apply_theme, get_theme, list_themes
+from app.service.wallpaper import (
+    is_supported as is_wallpaper_supported,
+    set_wallpaper_from_url,
+)
 
 _lg = get_logger()
 
@@ -266,8 +270,8 @@ async def _build_ui(page: Page) -> None:
         _lg.warning(f"Failed to apply theme {config.data.THEME}: {e}")
         try:
             apply_theme(page, "dark_default")
-        except Exception:
-            pass
+        except Exception as e:
+            _lg.error(f"Failed to apply fallback theme: {e}", exc_info=True)
 
     def on_page_error(e) -> None:
         """Log any unhandled exception happening on the page.
@@ -375,6 +379,25 @@ async def _build_ui(page: Page) -> None:
         """
         page.run_task(save_wallpaper, url, file_name, size)
 
+    async def set_wallpaper(url: str) -> None:
+        """Download a wallpaper and set it as the desktop background.
+
+        Windows only: the button is hidden on other platforms. Uses the
+        physical monitor size, keeps the original file when its ratio
+        matches, otherwise downscales; animated images are refused.
+        Scheduled from the right panel via page.run_task.
+
+        Args:
+            url: Full-size wallpaper URL.
+        """
+        if not is_wallpaper_supported():
+            return
+        _lg.info(f"Setting wallpaper from {url}.")
+        ok, message = await set_wallpaper_from_url(
+            middle_panel.api_client.fetch_bytes, url
+        )
+        _show_snack(page, message, is_error=not ok)
+
     def on_tag_click(tag_name: str) -> None:
         """Search for the clicked tag in the gallery.
 
@@ -398,6 +421,7 @@ async def _build_ui(page: Page) -> None:
 
     right_panel = RightPanel(
         on_download=request_save,
+        on_set_wallpaper=set_wallpaper,
         on_tag_click=on_tag_click,
         on_navigate=on_navigate,
     )
@@ -503,8 +527,8 @@ async def _build_ui(page: Page) -> None:
             else:
                 middle_panel.runs_count = 4
             middle_panel.update()
-        except Exception:
-            pass
+        except Exception as e:
+            _lg.debug(f"Resize handling failed: {e}", exc_info=True)
 
     page.on_resized = _on_resize
 

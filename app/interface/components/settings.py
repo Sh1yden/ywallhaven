@@ -229,8 +229,8 @@ class SettingsPanel(Container):
             if hasattr(self, "_theme_dd"):
                 try:
                     self._theme_dd.update()
-                except Exception:
-                    pass
+                except Exception as e:
+                    _lg.debug(f"Deferred theme dropdown update: {e}", exc_info=True)
         except Exception as e:
             _lg.debug(f"Failed to refresh theme options: {e}")
 
@@ -506,7 +506,8 @@ FilledButton(
                 DropdownOption(key=tid, text=td.name)
                 for tid, td in sorted_items
             ]
-        except Exception:
+        except Exception as e:
+            _lg.warning(f"Failed to list themes, using defaults: {e}", exc_info=True)
             options = [
                 DropdownOption(key="dark_default", text="Dark"),
                 DropdownOption(key="light_default", text="Light"),

@@ -34,6 +34,8 @@ class MiddlePanel(GridView, LoggerMixin):
     """
 
     SCROLL_THRESHOLD = 300
+    MAX_TRANSIENT_RETRIES = 3
+    RETRY_BASE_DELAY = 1.0
 
     def __init__(
         self,
@@ -55,6 +57,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self._wallpapers: List[Dict[str, Any]] = []
         self._filters: Dict[str, Any] = {}
         self._generation = 0
+        self._transient_failures = 0
 
         self._load_lock = asyncio.Lock()
         self._load_wanted = False
@@ -88,6 +91,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self._generation += 1
         self.state_page = 1
         self.has_more = True
+        self._transient_failures = 0
         self._wallpapers.clear()
         self.controls.clear()
         self._load_wanted = False
@@ -129,6 +133,12 @@ class MiddlePanel(GridView, LoggerMixin):
                 if generation != self._generation:
                     return
 
+                # Success (fresh or prefetched): the transient-failure
+                # streak ends here. An empty list now means a genuine
+                # end-of-feed — API errors raise instead of returning [],
+                # so they never reach this branch.
+                self._transient_failures = 0
+
                 if not wallpapers:
                     self._lg.warning("No more wallpapers found.")
                     self.has_more = False
@@ -151,18 +161,26 @@ class MiddlePanel(GridView, LoggerMixin):
                 )
             except Exception as e:
                 if generation == self._generation:
-                    # Transient 502/503 etc — retry, don't kill pagination
-                    msg = str(e).lower()
-                    is_transient = any(
-                        s in msg
-                        for s in ("502", "503", "429", "500", "bad gateway")
-                    ) or "transient" in msg
-                    if is_transient:
+                    if self._is_transient_error(
+                        e
+                    ) and self._transient_failures < self.MAX_TRANSIENT_RETRIES:
+                        self._transient_failures += 1
+                        delay = self.RETRY_BASE_DELAY * (
+                            2 ** (self._transient_failures - 1)
+                        )
                         self._lg.warning(
-                            f"Transient load error, retrying: {e}"
+                            f"Transient load error "
+                            f"({self._transient_failures}/"
+                            f"{self.MAX_TRANSIENT_RETRIES}), retrying in "
+                            f"{delay:.0f}s: {e}"
                         )
                         self._load_wanted = False
-                        self.page.run_task(self._retry_with_delay, 1.0)
+                        self.page.run_task(self._retry_with_delay, delay)
+                    elif self._is_transient_error(e):
+                        self._lg.error(
+                            "Transient load error, retry limit reached "
+                            f"— pagination kept alive: {e}."
+                        )
                     else:
                         self._lg.critical(f"Internal error: {e}.")
                 return
@@ -176,6 +194,20 @@ class MiddlePanel(GridView, LoggerMixin):
         """Retry load_more after delay."""
         await asyncio.sleep(delay)
         await self.load_more()
+
+    @staticmethod
+    def _is_transient_error(exc: Exception) -> bool:
+        """Check the HTTP status instead of parsing the message text.
+
+        Only errors carrying a response with a status from
+        WallhavenAPI.TRANSIENT_STATUSES are retried; anything else
+        (including errors without a response) is logged as-is and
+        never string-matched. Pagination (has_more) is left untouched
+        on every error path.
+        """
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        return status in WallhavenAPI.TRANSIENT_STATUSES
 
     def _consume_prefetched(self) -> List[Dict[str, Any]] | None:
         """Return the cached next page when it matches the current one.
@@ -221,18 +253,15 @@ class MiddlePanel(GridView, LoggerMixin):
                     page=page, **self._filters
                 )
             except Exception as e:
-                msg = str(e).lower()
-                is_transient = any(
-                    s in msg
-                    for s in ("502", "503", "429", "500", "bad gateway")
-                ) or "transient" in msg
-                self._lg.debug(
-                    f"Prefetch of page {page} skipped "
-                    f"({'transient' if is_transient else 'error'}): {e}"
-                )
+                # Fire-and-forget: leave the cache empty, the explicit
+                # load retries on its own. has_more stays untouched —
+                # only a successful empty page ends pagination.
+                self._lg.debug(f"Prefetch of page {page} skipped: {e}")
                 return
             if generation != self._generation:
                 return
+            # Only reachable on a successful (200) empty page: API
+            # errors raise instead of returning [].
             if not data:
                 self.has_more = False
                 return

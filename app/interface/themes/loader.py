@@ -51,23 +51,23 @@ def _candidate_theme_dirs() -> tuple[Path, ...]:
     if meipass:
         try:
             candidates.append(Path(sys.executable).resolve().parent / "themes")
-        except Exception:
-            pass
+        except Exception as e:
+            _lg.debug(f"Cannot resolve exe themes dir: {e}", exc_info=True)
     try:
         candidates.append(Path.cwd() / "themes")
-    except Exception:
-        pass
+    except Exception as e:
+        _lg.debug(f"Cannot resolve cwd themes dir: {e}", exc_info=True)
     try:
         candidates.append(
             Path(__file__).resolve().parent.parent.parent.parent / "themes"
         )
-    except Exception:
-        pass
+    except Exception as e:
+        _lg.debug(f"Cannot resolve repo themes dir: {e}", exc_info=True)
     if meipass:
         try:
             candidates.append(Path(meipass) / "themes")
-        except Exception:
-            pass
+        except Exception as e:
+            _lg.debug(f"Cannot resolve bundled themes dir: {e}", exc_info=True)
     # dedup preserve order
     return tuple(dict.fromkeys(candidates))
 
@@ -87,7 +87,8 @@ def _seed_examples(dest: Path) -> None:
     try:
         if any(dest.iterdir()):
             return
-    except Exception:
+    except Exception as e:
+        _lg.warning(f"Cannot inspect themes dir {dest}: {e}", exc_info=True)
         return
     for item in src.iterdir():
         name = item.name.lower()

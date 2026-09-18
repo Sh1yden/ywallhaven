@@ -43,6 +43,89 @@
     - [x] Фиксануть кнопки cancel, потому что после этой фичи они перестали работать
 - [x] Исправить размеры предпросмотра картинок в левой панели, + в мидл панели
 - [x] Получше залогировать приложение
+- [ ] Изменение github actions:
+    - [ ] Изменение структуры сборки релиза, а именно: `2exe -> folder name: "ywallhaven" -> zip archive name: "ywallhaven_portable"`.
+    - [ ] Добавление к релизу контрольной суммы(sha256).
+    - [ ] Добавить подпись приложению, так чтобы виндовс не ругалась.
+- [x] Крутая кнопочка установить как обои(должна быть около кнопки скачать, установить обои на вин): 
+```
+import ctypes
+
+def set_wallpaper(image_path: str):
+    SPI_SETDESKWALLPAPER = 20
+    SPIF_UPDATEINIFILE = 0x01
+    SPIF_SENDCHANGE = 0x02
+    ctypes.windll.user32.SystemParametersInfoW(
+        SPI_SETDESKWALLPAPER, 0, str(Path(image_path).resolve()), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+    )
+```
+- [x] Проверить обработку rate limits.
+- [x] Добавить сортировку по разрешению и соотношению сторон.
+- [ ] Добавить возможность увеличения фото на preview.
+- [x] Убрать тихие исключения по типу `except Exception: pass`.
+- [ ] Связывание UI через page.pubsub: упростить передачу сигналов между панелями.
+- [x] Замена lru_cache на cachetools.TTLCache: освободит память от старых запросов и предотвратит показ протухшей выдачи.
+- [ ] Исправление утечки памяти при использовании приложения(исключительно как я понимаю из-за галлереи, когда начинаешь подгружать, листая вниз, 
+галлерею начинается накапливание потребления озу до 500-600мб, в простое без подгрузов при запуске приложения, оно кушает около 100-200мб).
+- [ ] Оптимизация подгрузки эллементов, их независимость(например подгруз в основной галлереи, мидл панели, 
+не должен влиять на работоспособность всего приложения, не должно оно подвисать, кнопки должны дальше функционировать).
+
+## [0.10.0] - 2026-09-19
+
+### Добавлено
+
+- Кнопка `Set as Wallpaper` рядом с Download в правой панели
+  (`wallpaper.py`, `right_panel.py:190`, `flet_app.py:382-424`):
+  физический размер монитора через `GetSystemMetrics` (не `page.window`),
+  оригинал при совпадении `ratio` (~0.01), иначе ресайз `PIL thumbnail
+  LANCZOS` в `JPG`; animated `gif/webp` отклоняются со `SnackBar`;
+  единый temp-файл `TEMP/ywallhaven-wallpaper.jpg` (перезапись, чистка
+  только в `cleanup()`); на не-`win32` кнопка скрыта полностью.
+  Установка через `SystemParametersInfoW(20, 0, path, 0x01|0x02)`.
+- TTL кэша деталей обоев `900с` без новых зависимостей
+  (`wallhaven_api.py:34,39-40`): `OrderedDict[str,(monotonic,dict)]`,
+  `MAX=256`, возврат копией вместо ссылки (фикс алиасинга
+  `wallpaper["tags"]`), ленивая чистка протухшего на `hit`/`set`,
+  сброс при смене `apik` сохранён.
+- Единый retry-helper для `search/get/fetch_bytes`
+  (`wallhaven_api.py:66-146`): `Retry-After` (секунды или HTTP-date)
+  в приоритете, иначе `0.5*2^attempt+jitter`, cap `8.0с`,
+  `MAX_RETRIES=3`; `X-RateLimit-Remaining` в debug-лог.
+- Тесты: новый `tests/test_wallpaper.py` (31: гейт платформы, все ветки
+  `pick_or_resize`, `write_temp`/`cleanup_temp` на `tmp_path`, моки
+  `windll`, все ветки `set_wallpaper_from_url`); добивка TTL
+  (протухание, копия-не-алиас, prune на `set`), ретраев `middle_panel`
+  (`1/2/4с`, лимит 3, `has_more` жив) и `caplog` T5
+  (`tests/test_wallhaven_api.py`, `tests/test_middle_panel.py`,
+  `tests/test_themes.py`). Итог: `150 passed, 1 skipped`.
+
+### Исправлено
+
+- Тихие `except Exception: pass` переведены на логирование с сохранением
+  fallback (`config.py:54-58`, `flet_app.py:269,520-531`,
+  `themes/loader.py:55-91`, `themes/__init__.py:92-97`,
+  `right_panel.py:161-163`, `settings.py:232,509`,
+  `scripts/build.py:41`): `error` — fallback темы, `warning` — теги/темы,
+  `debug` — ресайз/deferred. Осознанно тихо оставлены
+  `logger_config.py:165`, `main.py`, `left_panel.py:356`.
+- `search_wallpapers` больше не возвращает `[]` на ошибке: non-transient
+  (`500/4xx`) сразу `raise`, transient (`429/502/503/504`) — bounded retry;
+  `middle_panel.py` различает `[]==конец` vs `[]==ошибка` и не ставит
+  `has_more=False` на ошибке; убран парсинг `str(e)` и мёртвый ретрай `500`.
+- Два новых `caplog`-теста на `DEBUG` переведены на точечный уровень
+  `logger="ywallhaven"` (`test_middle_panel.py`, `test_themes.py`):
+  `_build_ui` поднимает уровень логгера до `INFO`, голый `set_level`
+  `DEBUG`-записи отфильтровывал.
+
+### Изменено
+
+- Контракт `WallhavenAPI.search`: ошибка больше неотличима от конца выдачи;
+  старый тест `500 -> []` заменён на `raises` (`test_wallhaven_api.py:76`).
+- `get_wallpaper` возвращает копию (`_copy_details`: верх + копия `tags`)
+  и на `hit`, и на `miss` — первый caller больше не держит алиас на кэш.
+- `MiddlePanel._is_transient_error` — только `status_code` из
+  `TRANSIENT_STATUSES`; ошибка без response даёт `False` (в отличие от
+  `WallhavenAPI._is_transient`, где `None -> True`) — зафиксировано тестом.
 
 ## [0.9.2] - 2026-09-09
 
@@ -447,7 +530,8 @@
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.2...HEAD
+[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.2...v0.10.0
 [0.9.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.8.9...v0.9.0
