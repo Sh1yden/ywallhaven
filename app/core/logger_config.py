@@ -191,7 +191,10 @@ def get_updater_logger(
     The updater pipeline logs into ``updater-YYYY-MM-DD-NN.jsonl`` in
     the application log directory, using the same JSON formatter and
     the logging level from the main config. Messages still propagate
-    to the main application log for cross-correlation.
+    to the main application log for cross-correlation. The file is
+    created lazily on the first record, so sessions without updater
+    activity leave no empty files behind; stale empty files from
+    previous runs are pruned on setup.
 
     Args:
         log_dir: Directory where the updater log file is stored.
@@ -212,6 +215,12 @@ def get_updater_logger(
     )
 
     log_dir.mkdir(parents=True, exist_ok=True)
+    for stale in log_dir.glob("updater-*.jsonl"):
+        try:
+            if stale.is_file() and stale.stat().st_size == 0:
+                stale.unlink()
+        except OSError:
+            pass
     base_name = f"updater-{datetime.now().strftime('%Y-%m-%d')}"
     filename = f"{base_name}-01.jsonl"
     filepath = log_dir / filename
@@ -221,7 +230,9 @@ def get_updater_logger(
         filename = f"{base_name}-{counter:02d}.jsonl"
         filepath = log_dir / filename
 
-    handler = logging.FileHandler(filepath, encoding="utf-8")
+    handler = logging.FileHandler(
+        filepath, encoding="utf-8", delay=True
+    )
     handler.setLevel(level)
     handler.setFormatter(JSONFormatter())
     handler._ywallhaven_updater_file = True

@@ -508,6 +508,55 @@ def test_get_updater_logger_writes_dedicated_file(tmp_path):
         logger.handlers.clear()
 
 
+def test_get_updater_logger_creates_no_file_without_records(tmp_path):
+    from app.core.logger_config import get_updater_logger
+
+    logger = logging.getLogger("ywallhaven.updater")
+    logger.handlers.clear()
+
+    try:
+        get_updater_logger(log_dir=tmp_path)
+
+        assert list(tmp_path.glob("updater-*.jsonl")) == []
+    finally:
+        logger.handlers.clear()
+
+
+def test_get_updater_logger_ignores_below_level_records(tmp_path):
+    from app.core.logger_config import get_updater_logger
+
+    logger = logging.getLogger("ywallhaven.updater")
+    logger.handlers.clear()
+
+    try:
+        get_updater_logger(log_dir=tmp_path)
+        logger.log(5, "too quiet for any level")
+
+        assert list(tmp_path.glob("updater-*.jsonl")) == []
+    finally:
+        logger.handlers.clear()
+
+
+def test_get_updater_logger_prunes_empty_files(tmp_path):
+    from app.core.logger_config import get_updater_logger
+
+    logger = logging.getLogger("ywallhaven.updater")
+    logger.handlers.clear()
+
+    empty = tmp_path / "updater-2000-01-01-01.jsonl"
+    empty.write_text("", encoding="utf-8")
+    kept = tmp_path / "updater-2000-01-01-02.jsonl"
+    kept.write_text('{"level": "INFO"}\n', encoding="utf-8")
+
+    try:
+        get_updater_logger(log_dir=tmp_path)
+
+        assert not empty.exists()
+        assert kept.is_file()
+    finally:
+        logger.handlers.clear()
+
+
 # Standalone updater helper ----------------------------------------
 
 from updater.main import _process_alive, _wait_for_exit

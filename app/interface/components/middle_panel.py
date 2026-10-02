@@ -244,9 +244,11 @@ class MiddlePanel(GridView, LoggerMixin):
                             f"Wallhaven error {status}, no retry: {e}."
                         )
                         self._show_outage(kind, status)
+                        self._schedule_poll()
                     else:
                         self._lg.critical(f"Internal error: {e}.")
                         self._show_outage(kind, status)
+                        self._schedule_poll()
                 return
 
         if self._load_wanted and self.has_more:
@@ -355,9 +357,11 @@ class MiddlePanel(GridView, LoggerMixin):
 
     def retry_now(self, e=None) -> None:
         """Manual retry from the outage placeholder button."""
+        self._lg.debug("Manual gallery retry pressed.")
         self._transient_failures = 0
         self._outage_notified = False
         self._poll_scheduled = False
+        self._load_wanted = False
         page = getattr(self, "page", None)
         if page is None:
             return

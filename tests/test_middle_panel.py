@@ -256,7 +256,9 @@ async def test_load_more_non_transient_no_retry(panel, monkeypatch):
 
     assert panel._transient_failures == 0
     assert panel.has_more is True
-    assert stub.scheduled == []
+    fns = [getattr(fn, "__name__", "") for fn, _, _ in stub.scheduled]
+    assert "_retry_with_delay" not in fns
+    assert fns.count("_poll_with_delay") == 1
     assert panel.state_page == 1
 
 
@@ -433,6 +435,67 @@ def test_retry_now_resets_and_reschedules(panel, monkeypatch):
     assert panel._poll_scheduled is False
     fns = [getattr(fn, "__name__", "") for fn, _, _ in stub.scheduled]
     assert "load_more" in fns
+
+
+def test_retry_now_logs_press_and_clears_queue(panel, monkeypatch, caplog):
+    """The manual retry press must leave a trace even if load fails."""
+    import logging
+
+    stub = _OutagePageStub()
+    _attach_page(monkeypatch, panel, stub)
+    panel._load_wanted = True
+
+    with caplog.at_level(logging.DEBUG, logger="ywallhaven"):
+        panel.retry_now()
+
+    assert panel._load_wanted is False
+    assert any(
+        "Manual gallery retry pressed" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_poll_scheduled_for_all_outage_kinds(panel, monkeypatch):
+    """Slow poll covers site_error/app_error too, not only transient."""
+    for raiser in ("site", "app"):
+        stub = _OutagePageStub()
+        _attach_page(monkeypatch, panel, stub)
+        monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+
+        async def _raise(*args, **kwargs):
+            if raiser == "site":
+                raise _http_error(500)
+            raise _error_without_response()
+
+        monkeypatch.setattr(panel.api_client, "search_wallpapers", _raise)
+        panel._poll_scheduled = False
+        panel._transient_failures = 0
+
+        await panel.load_more()
+
+        fns = [getattr(fn, "__name__", "") for fn, _, _ in stub.scheduled]
+        assert fns.count("_poll_with_delay") == 1
+
+
+@pytest.mark.asyncio
+async def test_no_poll_when_grid_loaded(panel, monkeypatch):
+    """A failed load over existing tiles schedules no slow poll."""
+    stub = _OutagePageStub()
+    _attach_page(monkeypatch, panel, stub)
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    panel._wallpapers = [{"id": "w1"}]
+    panel._transient_failures = panel.MAX_TRANSIENT_RETRIES
+
+    async def _raise_503(*args, **kwargs):
+        raise _http_error(503)
+
+    monkeypatch.setattr(panel.api_client, "search_wallpapers", _raise_503)
+
+    await panel.load_more()
+
+    fns = [getattr(fn, "__name__", "") for fn, _, _ in stub.scheduled]
+    assert "_poll_with_delay" not in fns
 
 
 @pytest.mark.asyncio

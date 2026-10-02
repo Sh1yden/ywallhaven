@@ -23,11 +23,14 @@ from flet import (
     Image,
     ListView,
     MainAxisAlignment,
+    Matrix4,
+    Offset,
     Padding,
     Row,
     Stack,
     Text,
     TextButton,
+    Transform,
     UrlTarget,
 )
 from app.core import get_logger
@@ -85,6 +88,7 @@ class RightPanel(Container):
         self._backdrop_image: Image | None = None
         self._zoom_box: Container | None = None
         self._zoom = self.ZOOM_MIN
+        self._zoom_origin: Offset | None = None
         self._pinch_base: float | None = None
         self._tags_fetch_generation = 0
         self._tags_expanded = False
@@ -610,7 +614,7 @@ class RightPanel(Container):
         )
 
         self._zoom_box = Container(
-            scale=self._zoom,
+            transform=None,
             content=self._fullscreen_image,
         )
         zoom_detector = GestureDetector(
@@ -716,11 +720,37 @@ class RightPanel(Container):
         self._backdrop_image.src = src
         self._reset_zoom()
 
-    def _apply_zoom(self) -> None:
-        """Clamp the zoom level and push it to the zoom container."""
+    def _apply_zoom(self, anchor: Offset | None = None) -> None:
+        """Clamp the zoom level and push it to the zoom container.
+
+        Zooming anchors at the given point (e.g. the cursor), so the
+        pixel under the pointer stays put; without an anchor the view
+        scales around its center.
+
+        Args:
+            anchor: Point to zoom towards, in local pixels, or None
+                for the previously used anchor (center by default).
+        """
         self._zoom = max(self.ZOOM_MIN, min(self.ZOOM_MAX, self._zoom))
+        if anchor is not None:
+            self._zoom_origin = anchor
         if self._zoom_box is not None:
-            self._zoom_box.scale = self._zoom
+            if self._zoom <= self.ZOOM_MIN:
+                self._zoom_box.transform = None
+            elif self._zoom_origin is not None:
+                self._zoom_box.transform = Transform(
+                    matrix=Matrix4.diagonal3_values(
+                        self._zoom, self._zoom, 1.0
+                    ),
+                    origin=self._zoom_origin,
+                )
+            else:
+                self._zoom_box.transform = Transform(
+                    matrix=Matrix4.diagonal3_values(
+                        self._zoom, self._zoom, 1.0
+                    ),
+                    alignment=Alignment.CENTER,
+                )
             try:
                 self._zoom_box.update()
             except Exception as e:
@@ -743,16 +773,36 @@ class RightPanel(Container):
     def _reset_zoom(self) -> None:
         """Reset the zoom level without touching the image source."""
         self._zoom = self.ZOOM_MIN
+        self._zoom_origin = None
         self._pinch_base = None
         if self._zoom_box is not None:
-            self._zoom_box.scale = self.ZOOM_MIN
+            self._zoom_box.transform = None
             try:
                 self._zoom_box.update()
             except Exception as e:
                 _lg.debug(f"Zoom reset deferred: {e}")
 
+    @staticmethod
+    def _event_point(value: Any) -> Offset | None:
+        """Extract a local pixel point from a gesture event.
+
+        Args:
+            value: Event with local_position/local_focal_point Offset.
+
+        Returns:
+            Offset with the point, or None when unavailable.
+        """
+        for attr in ("local_position", "local_focal_point"):
+            point = getattr(value, attr, None)
+            if point is not None:
+                try:
+                    return Offset(float(point.x), float(point.y))
+                except (TypeError, ValueError, AttributeError):
+                    return None
+        return None
+
     def _on_zoom_scroll(self, e) -> None:
-        """Zoom with the mouse wheel (up zooms in, down zooms out)."""
+        """Zoom towards the cursor (up zooms in, down zooms out)."""
         delta = getattr(getattr(e, "scroll_delta", None), "y", 0) or 0
         if delta < 0:
             self._zoom += self.ZOOM_WHEEL_STEP
@@ -760,7 +810,7 @@ class RightPanel(Container):
             self._zoom -= self.ZOOM_WHEEL_STEP
         else:
             return
-        self._apply_zoom()
+        self._apply_zoom(self._event_point(e))
 
     def _on_pinch_start(self, e) -> None:
         """Remember the zoom level a pinch gesture starts from."""
@@ -773,7 +823,7 @@ class RightPanel(Container):
             base = self._zoom
             self._pinch_base = base
         self._zoom = base * (getattr(e, "scale", 1.0) or 1.0)
-        self._apply_zoom()
+        self._apply_zoom(self._event_point(e))
 
     def _on_fullscreen_tap(self, e) -> None:
         """Close on background tap, but never on a misclick while zoomed."""

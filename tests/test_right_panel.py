@@ -20,21 +20,33 @@ def panel():
     asyncio.run(p._api_client.close())
 
 
-def _wheel(dy: float):
-    """Fake a mouse-wheel event with the given vertical delta."""
-    return SimpleNamespace(scroll_delta=SimpleNamespace(x=0, y=dy))
+def _wheel(dy: float, x: float = 100.0, y: float = 50.0):
+    """Fake a mouse-wheel event with vertical delta at a cursor point."""
+    return SimpleNamespace(
+        scroll_delta=SimpleNamespace(x=0, y=dy),
+        local_position=SimpleNamespace(x=x, y=y),
+    )
+
+
+def _matrix_scale(transform) -> list:
+    """Extract the diagonal scale args from a recorded matrix."""
+    return list(transform.matrix.ctor.args)
 
 
 def test_zoom_buttons_clamp_to_range(panel):
     for _ in range(20):
         panel.zoom_in()
     assert panel._zoom == panel.ZOOM_MAX
-    assert panel._zoom_box.scale == panel.ZOOM_MAX
+    assert _matrix_scale(panel._zoom_box.transform) == [
+        panel.ZOOM_MAX,
+        panel.ZOOM_MAX,
+        1.0,
+    ]
 
     for _ in range(20):
         panel.zoom_out()
     assert panel._zoom == panel.ZOOM_MIN
-    assert panel._zoom_box.scale == panel.ZOOM_MIN
+    assert panel._zoom_box.transform is None
 
 
 def test_zoom_reset_restores_default(panel):
@@ -44,7 +56,8 @@ def test_zoom_reset_restores_default(panel):
 
     panel.zoom_reset()
     assert panel._zoom == panel.ZOOM_MIN
-    assert panel._zoom_box.scale == panel.ZOOM_MIN
+    assert panel._zoom_box.transform is None
+    assert panel._zoom_origin is None
     assert panel._pinch_base is None
 
 
@@ -62,13 +75,52 @@ def test_wheel_up_zooms_in_down_zooms_out(panel):
     assert panel._zoom == before
 
 
+def test_wheel_zooms_towards_cursor(panel):
+    panel._on_zoom_scroll(_wheel(-1.0, x=120.0, y=60.0))
+
+    transform = panel._zoom_box.transform
+    assert transform is not None
+    assert (transform.origin.x, transform.origin.y) == (120.0, 60.0)
+    assert _matrix_scale(transform) == [
+        panel._zoom,
+        panel._zoom,
+        1.0,
+    ]
+
+
+def test_buttons_reuse_last_cursor_anchor(panel):
+    panel._on_zoom_scroll(_wheel(-1.0, x=10.0, y=20.0))
+    panel.zoom_in()
+
+    assert (panel._zoom_box.transform.origin.x,
+            panel._zoom_box.transform.origin.y) == (10.0, 20.0)
+
+
+def test_buttons_without_anchor_scale_around_center(panel):
+    from flet import Alignment
+
+    panel.zoom_in()
+
+    transform = panel._zoom_box.transform
+    assert transform is not None
+    assert transform.origin is None
+    assert transform.alignment == Alignment.CENTER
+
+
 def test_pinch_scales_relative_to_gesture_start(panel):
     panel._zoom = 2.0
     panel._on_pinch_start(SimpleNamespace())
     assert panel._pinch_base == 2.0
 
-    panel._on_pinch_update(SimpleNamespace(scale=1.5))
+    panel._on_pinch_update(
+        SimpleNamespace(
+            scale=1.5,
+            local_focal_point=SimpleNamespace(x=30.0, y=40.0),
+        )
+    )
     assert panel._zoom == pytest.approx(3.0)
+    assert (panel._zoom_box.transform.origin.x,
+            panel._zoom_box.transform.origin.y) == (30.0, 40.0)
 
     panel._on_pinch_update(SimpleNamespace(scale=10.0))
     assert panel._zoom == panel.ZOOM_MAX
@@ -96,7 +148,7 @@ def test_close_fullscreen_resets_zoom(panel):
     panel.close_fullscreen(SimpleNamespace())
 
     assert panel._zoom == panel.ZOOM_MIN
-    assert panel._zoom_box.scale == panel.ZOOM_MIN
+    assert panel._zoom_box.transform is None
     assert panel._fullscreen_image.src == ""
     assert panel._backdrop_image.src == ""
     assert panel._fullscreen_layer.visible is False
