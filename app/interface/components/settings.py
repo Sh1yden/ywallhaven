@@ -1,7 +1,5 @@
 """Settings panel: blurred overlay shown above the whole interface."""
 
-from typing import Callable
-
 import json
 from pathlib import Path
 
@@ -36,6 +34,7 @@ from flet import (
 from app.core import config, get_logger
 from app.core.error_handling import guard
 from app.core.version import __version__
+from app.interface import bus
 from app.interface.components.update_dialog import check_and_offer
 
 _LOG_LEVELS = ["DEBUG", "INFO", "WARNING", "ERROR"]
@@ -54,11 +53,9 @@ class SettingsPanel(Container):
 
     def __init__(
         self,
-        on_api_key_change: Callable[[str], None] | None = None,
         theme_picker: FilePicker | None = None,
     ) -> None:
         super().__init__()
-        self._on_api_key_change = on_api_key_change
         self.expand = True
         self.visible = False
         if theme_picker is None:
@@ -172,9 +169,13 @@ class SettingsPanel(Container):
                 _lg.warning(f"Failed to apply theme {new_theme}: {e}")
                 self.page.update()
 
-        if self._on_api_key_change is not None and api_key_changed:
-            _lg.debug("Propagating the new API key to the left panel.")
-            self._on_api_key_change(api_key)
+        if api_key_changed:
+            _lg.debug("Publishing the new API key on the bus.")
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_API_KEY,
+                {"api_key": api_key},
+            )
 
         self._show_saved_notice()
 

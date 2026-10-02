@@ -32,6 +32,7 @@ from flet import (
 )
 from app.core import get_logger
 from app.core.resources import register
+from app.interface import bus
 from app.service import WallhavenAPI
 
 _lg = get_logger()
@@ -43,6 +44,10 @@ class RightPanel(Container):
     PREVIEW_RADIUS = 12
     GAP = 12
     TAG_CHIP_LIMIT = 10
+    ZOOM_MIN = 1.0
+    ZOOM_MAX = 5.0
+    ZOOM_WHEEL_STEP = 0.25
+    ZOOM_BUTTON_STEP = 0.5
     PRESET_RESOLUTIONS = [
         (1920, 1080),
         (2560, 1440),
@@ -52,15 +57,18 @@ class RightPanel(Container):
 
     def __init__(
         self,
-        on_download: Callable[[str, str, tuple[int, int] | None], None],
-        on_tag_click: Callable[[str], None] | None = None,
         on_navigate: Callable[[int, int | None], Any] | None = None,
-        on_set_wallpaper: Callable[[str], Any] | None = None,
     ) -> None:
+        """Build the panel; navigation stays a direct callback.
+
+        Fullscreen prev/next needs the resolved wallpaper back, which
+        fire-and-forget pubsub cannot return, so on_navigate is the
+        one deliberate exception to the bus.
+
+        Args:
+            on_navigate: Resolver for adjacent gallery items.
+        """
         super().__init__()
-        self._on_download = on_download
-        self._on_set_wallpaper = on_set_wallpaper
-        self._on_tag_click = on_tag_click
         self._on_navigate = on_navigate
         self._api_client = WallhavenAPI()
         register(self._api_client.close)
@@ -75,6 +83,9 @@ class RightPanel(Container):
         self._fullscreen_layer: Container | None = None
         self._fullscreen_image: Image | None = None
         self._backdrop_image: Image | None = None
+        self._zoom_box: Container | None = None
+        self._zoom = self.ZOOM_MIN
+        self._pinch_base: float | None = None
         self._tags_fetch_generation = 0
         self._tags_expanded = False
         self._dialog: AlertDialog | None = None
@@ -83,10 +94,12 @@ class RightPanel(Container):
         """Create and mount the fullscreen layer above the page."""
         super().did_mount()
         self._build_fullscreen_layer()
+        self._subscribe_bus()
         self.page.overlay.append(self._fullscreen_layer)
 
     def will_unmount(self) -> None:
         """Remove the fullscreen layer from the page overlay."""
+        self._unsubscribe_bus()
         super().will_unmount()
         if (
             self._fullscreen_layer is not None
@@ -94,6 +107,55 @@ class RightPanel(Container):
         ):
             self.page.overlay.remove(self._fullscreen_layer)
         self.page.run_task(self._api_client.close)
+
+    def _subscribe_bus(self) -> None:
+        """Listen for preview/download/api-key bus topics."""
+        page = getattr(self, "page", None)
+        bus.subscribe(page, bus.TOPIC_PREVIEW, self._on_preview_message)
+        bus.subscribe(
+            page, bus.TOPIC_DOWNLOAD_REQUEST, self._on_download_request
+        )
+        bus.subscribe(page, bus.TOPIC_API_KEY, self._on_api_key_message)
+
+    def _unsubscribe_bus(self) -> None:
+        """Stop listening for preview/download/api-key bus topics."""
+        page = getattr(self, "page", None)
+        bus.unsubscribe(page, bus.TOPIC_PREVIEW)
+        bus.unsubscribe(page, bus.TOPIC_DOWNLOAD_REQUEST)
+        bus.unsubscribe(page, bus.TOPIC_API_KEY)
+
+    def _on_preview_message(self, topic: str, message: Any) -> None:
+        """Render a preview received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_PREVIEW here).
+            message: {"wallpaper": dict, "index": int | None} payload.
+        """
+        payload = message or {}
+        wallpaper = payload.get("wallpaper")
+        if wallpaper is None:
+            return
+        self.update_preview(wallpaper, payload.get("index"))
+
+    def _on_download_request(
+        self, topic: str, message: Any
+    ) -> None:
+        """Open the resolution dialog for a bus download request.
+
+        Args:
+            topic: Bus topic (always TOPIC_DOWNLOAD_REQUEST here).
+            message: {"wallpaper": dict} payload.
+        """
+        self.request_download((message or {}).get("wallpaper"))
+
+    def _on_api_key_message(self, topic: str, message: Any) -> None:
+        """Apply an API key received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_API_KEY here).
+            message: {"api_key": str} payload.
+        """
+        self.set_api_key((message or {}).get("api_key", ""))
 
     # Public API ----------------------------------------------------
 
@@ -237,12 +299,16 @@ class RightPanel(Container):
             e: Click event from the wallpaper button.
         """
         wallpaper = self._last_wallpaper
-        if wallpaper is None or self._on_set_wallpaper is None:
+        if wallpaper is None:
             return
         url = wallpaper.get("path") or ""
         if not url:
             return
-        self.page.run_task(self._on_set_wallpaper, url)
+        bus.publish(
+            getattr(self, "page", None),
+            bus.TOPIC_SET_WALLPAPER,
+            {"url": url},
+        )
 
     def request_download(
         self, wallpaper: Dict[str, Any] | None
@@ -252,7 +318,7 @@ class RightPanel(Container):
         Args:
             wallpaper: Wallpaper dict from the search results.
         """
-        if wallpaper is None or self._on_download is None:
+        if wallpaper is None:
             return
 
         self._last_wallpaper = wallpaper
@@ -405,8 +471,14 @@ class RightPanel(Container):
 
         def choose(e, size=size, file_name=file_name) -> None:
             self._close_dialog(e)
-            self._on_download(
-                self._last_wallpaper.get("path", ""), file_name, size
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_DOWNLOAD,
+                {
+                    "url": self._last_wallpaper.get("path", ""),
+                    "file_name": file_name,
+                    "size": size,
+                },
             )
 
         return FilledButton(
@@ -537,6 +609,17 @@ class RightPanel(Container):
             content=self._backdrop_image,
         )
 
+        self._zoom_box = Container(
+            scale=self._zoom,
+            content=self._fullscreen_image,
+        )
+        zoom_detector = GestureDetector(
+            on_scroll=self._on_zoom_scroll,
+            on_scale_start=self._on_pinch_start,
+            on_scale_update=self._on_pinch_update,
+            content=self._zoom_box,
+        )
+
         self._fullscreen_layer = Container(
             visible=False,
             expand=True,
@@ -559,8 +642,8 @@ class RightPanel(Container):
                                     top=36, right=36, bottom=14, left=36
                                 ),
                                 alignment=Alignment.CENTER,
-                                on_click=self.close_fullscreen,
-                                content=self._fullscreen_image,
+                                on_click=self._on_fullscreen_tap,
+                                content=zoom_detector,
                             ),
                             Row(
                                 spacing=12,
@@ -569,6 +652,18 @@ class RightPanel(Container):
                                     self._nav_button(
                                         Icons.CHEVRON_LEFT,
                                         self._go_previous,
+                                    ),
+                                    self._nav_button(
+                                        Icons.ZOOM_OUT,
+                                        self.zoom_out,
+                                    ),
+                                    self._nav_button(
+                                        Icons.ZOOM_IN,
+                                        self.zoom_in,
+                                    ),
+                                    self._nav_button(
+                                        Icons.RESTART_ALT,
+                                        self.zoom_reset,
                                     ),
                                     self._nav_button(
                                         Icons.CLOSE,
@@ -619,6 +714,73 @@ class RightPanel(Container):
         src = self._last_wallpaper.get("path")
         self._fullscreen_image.src = src
         self._backdrop_image.src = src
+        self._reset_zoom()
+
+    def _apply_zoom(self) -> None:
+        """Clamp the zoom level and push it to the zoom container."""
+        self._zoom = max(self.ZOOM_MIN, min(self.ZOOM_MAX, self._zoom))
+        if self._zoom_box is not None:
+            self._zoom_box.scale = self._zoom
+            try:
+                self._zoom_box.update()
+            except Exception as e:
+                _lg.debug(f"Zoom update deferred: {e}")
+
+    def zoom_in(self, e=None) -> None:
+        """Zoom the fullscreen image in by one button step."""
+        self._zoom += self.ZOOM_BUTTON_STEP
+        self._apply_zoom()
+
+    def zoom_out(self, e=None) -> None:
+        """Zoom the fullscreen image out by one button step."""
+        self._zoom -= self.ZOOM_BUTTON_STEP
+        self._apply_zoom()
+
+    def zoom_reset(self, e=None) -> None:
+        """Reset the fullscreen zoom to 1.0."""
+        self._reset_zoom()
+
+    def _reset_zoom(self) -> None:
+        """Reset the zoom level without touching the image source."""
+        self._zoom = self.ZOOM_MIN
+        self._pinch_base = None
+        if self._zoom_box is not None:
+            self._zoom_box.scale = self.ZOOM_MIN
+            try:
+                self._zoom_box.update()
+            except Exception as e:
+                _lg.debug(f"Zoom reset deferred: {e}")
+
+    def _on_zoom_scroll(self, e) -> None:
+        """Zoom with the mouse wheel (up zooms in, down zooms out)."""
+        delta = getattr(getattr(e, "scroll_delta", None), "y", 0) or 0
+        if delta < 0:
+            self._zoom += self.ZOOM_WHEEL_STEP
+        elif delta > 0:
+            self._zoom -= self.ZOOM_WHEEL_STEP
+        else:
+            return
+        self._apply_zoom()
+
+    def _on_pinch_start(self, e) -> None:
+        """Remember the zoom level a pinch gesture starts from."""
+        self._pinch_base = self._zoom
+
+    def _on_pinch_update(self, e) -> None:
+        """Scale the zoom relative to the pinch gesture start."""
+        base = self._pinch_base
+        if base is None:
+            base = self._zoom
+            self._pinch_base = base
+        self._zoom = base * (getattr(e, "scale", 1.0) or 1.0)
+        self._apply_zoom()
+
+    def _on_fullscreen_tap(self, e) -> None:
+        """Close on background tap, but never on a misclick while zoomed."""
+        if self._zoom > self.ZOOM_MIN:
+            _lg.debug("Fullscreen tap ignored while zoomed.")
+            return
+        self.close_fullscreen(e)
 
     def open_fullscreen(self, e) -> None:
         """Show the current wallpaper image in fullscreen.
@@ -644,6 +806,13 @@ class RightPanel(Container):
             return
 
         _lg.debug("Fullscreen closed.")
+        self._reset_zoom()
+        # Release the bitmaps: visibility alone keeps both Image
+        # sources (and the blurred backdrop) in the Flutter cache.
+        if self._fullscreen_image is not None:
+            self._fullscreen_image.src = ""
+        if self._backdrop_image is not None:
+            self._backdrop_image.src = ""
         self._fullscreen_layer.visible = False
         self._fullscreen_layer.update()
 
@@ -890,8 +1059,12 @@ class RightPanel(Container):
         Args:
             name: Tag name to search for.
         """
-        if name and self._on_tag_click:
-            self._on_tag_click(name)
+        if name:
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_TAG,
+                {"name": name},
+            )
 
     def _expand_tags(self, e) -> None:
         """Show the full list of tag chips for the current wallpaper.

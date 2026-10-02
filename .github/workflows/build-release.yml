@@ -27,6 +27,9 @@ jobs:
       - name: Build executables
         run: uv run python scripts/build.py
 
+      - name: Package portable zip and checksums
+        run: uv run python scripts/package_release.py "${{ github.ref_name }}"
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -34,6 +37,8 @@ jobs:
           path: |
             dist/ywallhaven.exe
             dist/ywallhaven-updater.exe
+            dist/ywallhaven_portable-${{ github.ref_name }}.zip
+            dist/SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -41,6 +46,8 @@ jobs:
           files: |
             dist/ywallhaven.exe
             dist/ywallhaven-updater.exe
+            dist/ywallhaven_portable-${{ github.ref_name }}.zip
+            dist/SHA256SUMS.txt
           prerelease: ${{ contains(github.ref_name, '-') }}
           name: ${{ github.ref_name }}
           body: |
@@ -48,6 +55,10 @@ jobs:
 
             Файлы:
             - `ywallhaven.exe` — основное приложение;
-            - `ywallhaven-updater.exe` — помощник автообновления.
+            - `ywallhaven-updater.exe` — помощник автообновления;
+            - `ywallhaven_portable-${{ github.ref_name }}.zip` — портативная сборка (папка `ywallhaven` с обоими exe);
+            - `SHA256SUMS.txt` — контрольные суммы SHA-256.
+
+            Проверка: `certutil -hashfile ywallhaven.exe SHA256` и сверка с `SHA256SUMS.txt`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

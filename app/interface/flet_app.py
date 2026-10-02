@@ -35,6 +35,7 @@ from PIL import Image as PILImage
 from app.core import config, get_logger
 from app.core.error_handling import install_loop_exception_handler
 from app.core.resources import close_all
+from app.interface import bus
 from app.interface.components import (
     LeftPanel,
     MiddlePanel,
@@ -298,6 +299,7 @@ async def _build_ui(page: Page) -> None:
             e: Disconnect event from the Flet client.
         """
         _lg.debug("Session disconnected; closing resources...")
+        bus.unsubscribe_all(page)
         page.run_task(close_all)
 
     page.on_disconnect = on_disconnect
@@ -398,17 +400,12 @@ async def _build_ui(page: Page) -> None:
         )
         _show_snack(page, message, is_error=not ok)
 
-    def on_tag_click(tag_name: str) -> None:
-        """Search for the clicked tag in the gallery.
-
-        Args:
-            tag_name: Tag name to search for.
-        """
-        _lg.debug(f"Tag clicked: {tag_name!r}.")
-        left_panel.search_tag(tag_name)
-
     def on_navigate(delta: int, index: int | None) -> Any:
         """Move to an adjacent wallpaper in the loaded gallery.
+
+        Stays a direct callback on purpose: fullscreen prev/next needs
+        the resolved wallpaper back, which fire-and-forget pubsub
+        cannot return.
 
         Args:
             delta: Offset from the current wallpaper.
@@ -419,30 +416,39 @@ async def _build_ui(page: Page) -> None:
         """
         return middle_panel.select_relative(delta, index)
 
-    right_panel = RightPanel(
-        on_download=request_save,
-        on_set_wallpaper=set_wallpaper,
-        on_tag_click=on_tag_click,
-        on_navigate=on_navigate,
-    )
-    middle_panel = MiddlePanel(
-        right_panel=right_panel,
-    )
-    left_panel = LeftPanel(middle_panel)
+    right_panel = RightPanel(on_navigate=on_navigate)
+    middle_panel = MiddlePanel()
+    left_panel = LeftPanel()
 
-    def on_api_key_change(api_key: str) -> None:
-        """Propagate the API key from the settings to both panels.
+    settings_panel = SettingsPanel(theme_picker=theme_picker)
+
+    def _on_bus_download(topic: str, message: Any) -> None:
+        """Start the save flow for a download published on the bus.
 
         Args:
-            api_key: New Wallhaven API key or an empty string.
+            topic: Bus topic (always TOPIC_DOWNLOAD here).
+            message: {"url": str, "file_name": str, "size": ...} payload.
         """
-        left_panel.set_api_key(api_key)
-        right_panel.set_api_key(api_key)
+        payload = message or {}
+        request_save(
+            payload.get("url", ""),
+            payload.get("file_name", "wallpaper"),
+            payload.get("size"),
+        )
 
-    settings_panel = SettingsPanel(
-        on_api_key_change=on_api_key_change,
-        theme_picker=theme_picker,
-    )
+    def _on_bus_wallpaper(topic: str, message: Any) -> None:
+        """Set the desktop background for a bus wallpaper request.
+
+        Args:
+            topic: Bus topic (always TOPIC_SET_WALLPAPER here).
+            message: {"url": str} payload.
+        """
+        url = (message or {}).get("url", "")
+        if url:
+            page.run_task(set_wallpaper, url)
+
+    bus.subscribe(page, bus.TOPIC_DOWNLOAD, _on_bus_download)
+    bus.subscribe(page, bus.TOPIC_SET_WALLPAPER, _on_bus_wallpaper)
 
     icon_bytes = _app_icon_bytes()
     logo = (

@@ -1,7 +1,9 @@
 """Async updater service backed by the GitHub releases API."""
 
+import ctypes
 import hashlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 from subprocess import Popen
@@ -24,6 +26,41 @@ _upd_lg = get_updater_logger()
 
 class UpdaterError(Exception):
     """Raised when an update cannot be checked or applied."""
+
+
+def launch_elevated_windows(
+    helper: Path, argv: list[str], cwd: Path
+) -> tuple[bool, str]:
+    """Start the updater helper with elevation on Windows.
+
+    The helper carries a ``requireAdministrator`` manifest, so a plain
+    ``Popen`` from a non-elevated app fails with ``WinError 740``.
+    ``ShellExecuteW`` with the ``runas`` verb shows the standard UAC
+    prompt instead.
+
+    Args:
+        helper: Path of the updater helper executable.
+        argv: Helper arguments (without the executable itself).
+        cwd: Working directory for the helper.
+
+    Returns:
+        (ok, reason) pair; reason is empty on success and holds a
+        short human-readable cause otherwise.
+    """
+    try:
+        params = subprocess.list2cmdline([str(a) for a in argv])
+        rc = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+            None, "runas", str(helper), params, str(cwd), 1
+        )
+    except OSError as e:
+        return False, f"elevation failed: {e}"
+    except Exception as e:
+        return False, f"elevation failed: {e}"
+    if isinstance(rc, int) and rc <= 32:
+        return False, f"elevation failed (code {rc})"
+    if not rc:
+        return False, "elevation failed"
+    return True, ""
 
 
 class UpdaterService(LoggerMixin):
@@ -365,6 +402,27 @@ class UpdaterService(LoggerMixin):
             "--restart",
         ]
         _upd_lg.debug(f"Launching updater helper: {command}")
+        if sys.platform == "win32":
+            # The helper requires elevation (requireAdministrator):
+            # a plain Popen from a non-elevated app dies with
+            # WinError 740, so go through the UAC prompt instead.
+            ok, reason = launch_elevated_windows(
+                helper, command[1:], exe_path.parent
+            )
+            if not ok:
+                if "1223" in reason or "cancel" in reason.lower():
+                    reason = "elevation cancelled by the user"
+                self._lg.error(f"Failed to start updater helper: {reason}.")
+                _upd_lg.error(
+                    f"Failed to start updater helper: {reason}."
+                )
+                self.last_launch_error = (
+                    f"failed to start updater helper: {reason}"
+                )
+                return False
+            _upd_lg.info("Updater helper started; shutting down...")
+            self._lg.info("Updater helper started; shutting down...")
+            return True
         try:
             Popen(
                 command,

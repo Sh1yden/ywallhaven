@@ -165,6 +165,85 @@ def _capture_sleep(monkeypatch) -> list:
 
 
 @pytest.mark.asyncio
+async def test_search_retries_cloudflare_down_codes(monkeypatch):
+    """Origin-down 521-524 must be retried like other transient codes."""
+    for status in (521, 522, 523, 524):
+        calls: list = []
+        responses = iter(
+            [
+                httpx.Response(status),
+                httpx.Response(200, json={"data": [WALLPAPER]}),
+            ]
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls.append(request.url.path)
+            return next(responses)
+
+        api = make_client(handler)
+        delays = _capture_sleep(monkeypatch)
+        result = await api.search_wallpapers()
+        await api.close()
+
+        assert result == [WALLPAPER]
+        assert len(calls) == 2
+        assert len(delays) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_gives_up_immediately_on_other_5xx():
+    """520/525 are outside the origin-down range: no retry, raise."""
+    for status in (520, 525):
+        calls: list = []
+        api = make_client(
+            lambda request: calls.append(request)
+            or httpx.Response(status)
+        )
+        with pytest.raises(httpx.HTTPError):
+            await api.search_wallpapers()
+        await api.close()
+
+        assert len(calls) == 1
+
+
+def test_classify_error_names_fault_origin():
+    """classify_error tells a dead Wallhaven from an app failure."""
+    assert WallhavenAPI.classify_error(_status_error(429)) == (
+        "site_down",
+        429,
+    )
+    assert WallhavenAPI.classify_error(_status_error(521)) == (
+        "site_down",
+        521,
+    )
+    assert WallhavenAPI.classify_error(_status_error(500)) == (
+        "site_error",
+        500,
+    )
+    assert WallhavenAPI.classify_error(_status_error(404)) == (
+        "site_error",
+        404,
+    )
+    assert WallhavenAPI.classify_error(httpx.ConnectTimeout("down")) == (
+        "app_error",
+        None,
+    )
+    assert WallhavenAPI.classify_error(httpx.HTTPError("boom")) == (
+        "app_error",
+        None,
+    )
+
+
+def _status_error(status_code: int) -> httpx.HTTPStatusError:
+    """Build an httpx error carrying a response with the given status."""
+    request = httpx.Request("GET", "https://wallhaven.cc/api/v1/search")
+    response = httpx.Response(status_code, request=request)
+    return httpx.HTTPStatusError(
+        f"Mock {status_code}", request=request, response=response
+    )
+
+
+@pytest.mark.asyncio
 async def test_search_retries_429_then_succeeds(monkeypatch):
     """A 429 must be retried (not raised immediately)."""
     calls: list = []

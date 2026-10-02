@@ -373,6 +373,124 @@ async def test_launch_updater_starts_helper(monkeypatch, tmp_path):
     await updater.close()
 
 
+def _windll_stub(monkeypatch, shell_execute):
+    """Stub ctypes.windll (absent on Linux) with a fake ShellExecuteW."""
+    import ctypes
+
+    class _Shell32:
+        def ShellExecuteW(self, *args):
+            return shell_execute(*args)
+
+    class _Windll:
+        shell32 = _Shell32()
+
+    monkeypatch.setattr(ctypes, "windll", _Windll(), raising=False)
+
+
+def test_launch_elevated_windows_success(monkeypatch, tmp_path):
+    seen: list = []
+
+    def _execute(*args):
+        seen.append(args)
+        return 42
+
+    _windll_stub(monkeypatch, _execute)
+
+    ok, reason = updater_module.launch_elevated_windows(
+        tmp_path / "ywallhaven-updater.exe",
+        ["--pid", "1", "--restart"],
+        tmp_path,
+    )
+
+    assert ok is True
+    assert reason == ""
+    assert seen
+    assert seen[0][1] == "runas"
+
+
+def test_launch_elevated_windows_failure_code(monkeypatch, tmp_path):
+    _windll_stub(monkeypatch, lambda *args: 5)
+
+    ok, reason = updater_module.launch_elevated_windows(
+        tmp_path / "ywallhaven-updater.exe", ["--pid", "1"], tmp_path
+    )
+
+    assert ok is False
+    assert "5" in reason
+
+
+def test_launch_elevated_windows_oserror(monkeypatch, tmp_path):
+    def _raise(*args):
+        raise OSError("[WinError 1223] operation cancelled")
+
+    _windll_stub(monkeypatch, _raise)
+
+    ok, reason = updater_module.launch_elevated_windows(
+        tmp_path / "ywallhaven-updater.exe", ["--pid", "1"], tmp_path
+    )
+
+    assert ok is False
+    assert reason
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_uses_elevation_on_windows(
+    monkeypatch, tmp_path
+):
+    updater = make_updater([])
+    fake_exe = tmp_path / "ywallhaven.exe"
+    helper = tmp_path / "ywallhaven-updater.exe"
+    src = tmp_path / "new-update.exe"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+    monkeypatch.setattr(sys, "platform", "win32")
+
+    called: list = []
+    monkeypatch.setattr(
+        updater_module,
+        "launch_elevated_windows",
+        lambda h, argv, cwd: called.append((h, argv, cwd))
+        or (True, ""),
+    )
+
+    assert updater.launch_updater(src) is True
+    assert updater.last_launch_error == ""
+    assert called
+    assert called[0][0] == helper
+    assert "--restart" in called[0][1]
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_reports_cancelled_elevation(
+    monkeypatch, tmp_path
+):
+    updater = make_updater([])
+    fake_exe = tmp_path / "ywallhaven.exe"
+    helper = tmp_path / "ywallhaven-updater.exe"
+    src = tmp_path / "new-update.exe"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        updater_module,
+        "launch_elevated_windows",
+        lambda *args: (False, "elevation failed: [WinError 1223]"),
+    )
+
+    assert updater.launch_updater(src) is False
+    assert "cancelled" in updater.last_launch_error
+    await updater.close()
+
+
 def test_get_updater_logger_writes_dedicated_file(tmp_path):
     from app.core.logger_config import get_updater_logger
 

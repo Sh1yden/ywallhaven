@@ -20,7 +20,7 @@ from flet import (
     TextField,
 )
 from app.core import LoggerMixin, config
-from app.interface.components.middle_panel import MiddlePanel
+from app.interface import bus
 
 RESOLUTIONS = [
     "Any",
@@ -80,14 +80,55 @@ TOP_RANGES = [
 class LeftPanel(Container, LoggerMixin):
     """Search, API key and filters above the wallpaper gallery."""
 
-    def __init__(self, middle_panel: MiddlePanel) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self._middle = middle_panel
         self.expand = 1
         self.padding = 14
         self.bgcolor = Colors.SURFACE_CONTAINER
         self.border_radius = 16
         self.content = self._build_panel()
+
+    def did_mount(self) -> None:
+        """Subscribe to tag and API-key bus topics."""
+        super().did_mount()
+        self._subscribe_bus()
+
+    def will_unmount(self) -> None:
+        """Drop the bus subscriptions."""
+        self._unsubscribe_bus()
+        super().will_unmount()
+
+    def _subscribe_bus(self) -> None:
+        """Listen for tag searches and API-key updates."""
+        page = getattr(self, "page", None)
+        bus.subscribe(page, bus.TOPIC_TAG, self._on_tag_message)
+        bus.subscribe(page, bus.TOPIC_API_KEY, self._on_api_key_message)
+
+    def _unsubscribe_bus(self) -> None:
+        """Stop listening for tag searches and API-key updates."""
+        page = getattr(self, "page", None)
+        bus.unsubscribe(page, bus.TOPIC_TAG)
+        bus.unsubscribe(page, bus.TOPIC_API_KEY)
+
+    def _on_tag_message(self, topic: str, message: Any) -> None:
+        """Search for a tag received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_TAG here).
+            message: {"name": str} payload.
+        """
+        name = (message or {}).get("name", "")
+        if name:
+            self.search_tag(name)
+
+    def _on_api_key_message(self, topic: str, message: Any) -> None:
+        """Apply an API key received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_API_KEY here).
+            message: {"api_key": str} payload.
+        """
+        self.set_api_key((message or {}).get("api_key", ""))
 
     def _build_panel(self) -> ListView:
         """Build the search, API key and filters column.
@@ -461,7 +502,11 @@ class LeftPanel(Container, LoggerMixin):
 
         masked = f"{api_key[:4]}***" if api_key else "<empty>"
         self._lg.debug(f"Applied filters (api key: {masked}).")
-        self._middle.apply_filters(api_key, self._collect_filters())
+        bus.publish(
+            getattr(self, "page", None),
+            bus.TOPIC_FILTERS,
+            {"api_key": api_key, "filters": self._collect_filters()},
+        )
 
     def search_tag(self, name: str) -> None:
         """Fill the search field with a tag and apply it immediately.

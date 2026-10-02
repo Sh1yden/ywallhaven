@@ -26,7 +26,7 @@ class WallhavenAPI(LoggerMixin):
         "image/bmp": ".bmp",
     }
 
-    TRANSIENT_STATUSES = (429, 502, 503, 504)
+    TRANSIENT_STATUSES = (429, 502, 503, 504, 521, 522, 523, 524)
     DETAILS_CACHE_MAX = 256
     MAX_RETRIES = 3
     BASE_DELAY = 0.5
@@ -85,6 +85,28 @@ class WallhavenAPI(LoggerMixin):
         if status is None:
             return True
         return status in self.TRANSIENT_STATUSES
+
+    @staticmethod
+    def classify_error(exc: Exception) -> tuple[str, int | None]:
+        """Classify a request failure by fault origin.
+
+        Single place deciding whose fault an outage is, so the UI
+        can tell a dead Wallhaven apart from an app-side failure.
+
+        Returns:
+            (kind, status) where kind is "site_down" (origin
+            unreachable family from TRANSIENT_STATUSES — retryable),
+            "site_error" (Wallhaven answered with an error — no
+            retry), or "app_error" (no response at all or an
+            unexpected failure).
+        """
+        response = getattr(exc, "response", None)
+        status = getattr(response, "status_code", None)
+        if isinstance(status, int):
+            if status in WallhavenAPI.TRANSIENT_STATUSES:
+                return "site_down", status
+            return "site_error", status
+        return "app_error", None
 
     def _retry_delay(self, exc: HTTPError, attempt: int) -> float:
         """Compute the delay before retry `attempt` (0-based).

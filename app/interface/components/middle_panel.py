@@ -8,6 +8,11 @@ from flet import (
     GridView,
     GestureDetector,
     Container,
+    Column,
+    FilledButton,
+    SnackBar,
+    SnackBarBehavior,
+    MainAxisAlignment,
     Colors,
     ClipBehavior,
     Icon,
@@ -21,7 +26,7 @@ from flet import (
 )
 from app.core import LoggerMixin
 from app.core.resources import register
-from app.interface.components.right_panel import RightPanel
+from app.interface import bus
 from app.service import WallhavenAPI
 
 
@@ -36,13 +41,11 @@ class MiddlePanel(GridView, LoggerMixin):
     SCROLL_THRESHOLD = 300
     MAX_TRANSIENT_RETRIES = 3
     RETRY_BASE_DELAY = 1.0
+    OUTAGE_POLL_DELAY = 60.0
+    TILE_WINDOW = 120
 
-    def __init__(
-        self,
-        right_panel: RightPanel,
-    ) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.right_panel = right_panel
         self.api_client = WallhavenAPI()
         register(self.api_client.close)
         self.expand = 3
@@ -66,15 +69,48 @@ class MiddlePanel(GridView, LoggerMixin):
         self._prefetched_page: List[Dict[str, Any]] | None = None
         self._prefetched_page_number: int | None = None
 
+        self._outage_kind: str | None = None
+        self._outage_notified = False
+        self._poll_scheduled = False
+        self._outage_tile: Container | None = None
+
         self.on_scroll = self.handle_scroll
 
     def did_mount(self) -> None:
         super().did_mount()
+        self._subscribe_bus()
         self.page.run_task(self.load_more)
 
     def will_unmount(self):
+        self._unsubscribe_bus()
         super().will_unmount()
         self.page.run_task(self.api_client.close)
+
+    def _subscribe_bus(self) -> None:
+        """Listen for filter changes coming from the left panel."""
+        bus.subscribe(
+            getattr(self, "page", None),
+            bus.TOPIC_FILTERS,
+            self._on_filters_message,
+        )
+
+    def _unsubscribe_bus(self) -> None:
+        """Stop listening for filter changes."""
+        bus.unsubscribe(
+            getattr(self, "page", None), bus.TOPIC_FILTERS
+        )
+
+    def _on_filters_message(self, topic: str, message: Any) -> None:
+        """Reload the gallery with filters received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_FILTERS here).
+            message: {"api_key": str, "filters": dict} payload.
+        """
+        payload = message or {}
+        self.apply_filters(
+            payload.get("api_key", ""), payload.get("filters", {})
+        )
 
     def apply_filters(
         self, api_key: str, filters: Dict[str, Any]
@@ -92,6 +128,10 @@ class MiddlePanel(GridView, LoggerMixin):
         self.state_page = 1
         self.has_more = True
         self._transient_failures = 0
+        self._outage_kind = None
+        self._outage_notified = False
+        self._poll_scheduled = False
+        self._outage_tile = None
         self._wallpapers.clear()
         self.controls.clear()
         self._load_wanted = False
@@ -138,6 +178,9 @@ class MiddlePanel(GridView, LoggerMixin):
                 # end-of-feed — API errors raise instead of returning [],
                 # so they never reach this branch.
                 self._transient_failures = 0
+                if self._outage_tile is not None or self._outage_notified:
+                    # Silent recovery: the filling grid is the signal.
+                    self._hide_outage()
 
                 if not wallpapers:
                     self._lg.warning("No more wallpapers found.")
@@ -151,6 +194,17 @@ class MiddlePanel(GridView, LoggerMixin):
                     self._build_title(wallpaper, start + i)
                     for i, wallpaper in enumerate(wallpapers)
                 )
+                # Window the grid (~5 pages of 24): drop the oldest
+                # tiles so RAM and the Flutter image cache stop growing
+                # past ~500MB on long scrolls. Stored preview indices
+                # may go stale after eviction; click handlers and
+                # select_relative clamp them back into range.
+                while len(self._wallpapers) > self.TILE_WINDOW:
+                    self._wallpapers.pop(0)
+                    self.controls.pop(0)
+                for pos, tile in enumerate(self.controls):
+                    if isinstance(tile, GestureDetector):
+                        tile.data = pos
                 self.state_page += 1
                 self.update()
                 self._lg.debug(
@@ -161,6 +215,7 @@ class MiddlePanel(GridView, LoggerMixin):
                 )
             except Exception as e:
                 if generation == self._generation:
+                    kind, status = WallhavenAPI.classify_error(e)
                     if self._is_transient_error(
                         e
                     ) and self._transient_failures < self.MAX_TRANSIENT_RETRIES:
@@ -175,14 +230,23 @@ class MiddlePanel(GridView, LoggerMixin):
                             f"{delay:.0f}s: {e}"
                         )
                         self._load_wanted = False
+                        self._show_outage(kind, status)
                         self.page.run_task(self._retry_with_delay, delay)
                     elif self._is_transient_error(e):
                         self._lg.error(
                             "Transient load error, retry limit reached "
                             f"— pagination kept alive: {e}."
                         )
+                        self._show_outage(kind, status)
+                        self._schedule_poll()
+                    elif kind == "site_error":
+                        self._lg.error(
+                            f"Wallhaven error {status}, no retry: {e}."
+                        )
+                        self._show_outage(kind, status)
                     else:
                         self._lg.critical(f"Internal error: {e}.")
+                        self._show_outage(kind, status)
                 return
 
         if self._load_wanted and self.has_more:
@@ -194,6 +258,127 @@ class MiddlePanel(GridView, LoggerMixin):
         """Retry load_more after delay."""
         await asyncio.sleep(delay)
         await self.load_more()
+
+    @staticmethod
+    def _outage_text(kind: str, status: int | None) -> str:
+        """User-facing outage message stating whose fault it is.
+
+        Args:
+            kind: One of "site_down", "site_error", "app_error" from
+                WallhavenAPI.classify_error.
+            status: HTTP status when Wallhaven answered, else None.
+
+        Returns:
+            Message naming the faulty side.
+        """
+        if kind == "site_down":
+            return (
+                f"Wallhaven is down (HTTP {status}). "
+                "Retrying automatically…"
+            )
+        if kind == "site_error":
+            return (
+                f"Wallhaven returned an error (HTTP {status}). "
+                "Try different filters or Retry."
+            )
+        return (
+            "App error: could not reach Wallhaven. "
+            "Check the logs and Retry."
+        )
+
+    def _show_outage(self, kind: str, status: int | None) -> None:
+        """Render the outage state and notify once per episode.
+
+        A placeholder tile with a Retry button is added only when the
+        grid is empty; otherwise a single SnackBar is enough so loaded
+        tiles are never wiped. The SnackBar fires once until the next
+        success or filter change.
+
+        Args:
+            kind: Fault origin from WallhavenAPI.classify_error.
+            status: HTTP status when Wallhaven answered, else None.
+        """
+        self._outage_kind = kind
+        page = getattr(self, "page", None)
+        if page is None:
+            return
+        message = self._outage_text(kind, status)
+        if not self._outage_notified:
+            self._outage_notified = True
+            try:
+                page.show_dialog(
+                    SnackBar(
+                        content=Text(message),
+                        behavior=SnackBarBehavior.FLOATING,
+                        bgcolor=Colors.RED,
+                    )
+                )
+            except Exception as e:
+                self._lg.debug(f"Outage snack deferred: {e}")
+        if not self._wallpapers and self._outage_tile is None:
+            self._outage_tile = Container(
+                padding=12,
+                content=Column(
+                    alignment=MainAxisAlignment.CENTER,
+                    controls=[
+                        Icon(
+                            Icons.CLOUD_OFF,
+                            size=48,
+                            color=Colors.OUTLINE_VARIANT,
+                        ),
+                        Text(message, size=14),
+                        FilledButton(
+                            "Retry",
+                            icon=Icons.REFRESH,
+                            on_click=self.retry_now,
+                        ),
+                    ],
+                ),
+            )
+            self.controls.append(self._outage_tile)
+            try:
+                self.update()
+            except Exception as e:
+                self._lg.debug(f"Outage tile update deferred: {e}")
+
+    def _hide_outage(self) -> None:
+        """Drop the outage tile and reset notification state."""
+        self._outage_kind = None
+        self._outage_notified = False
+        self._poll_scheduled = False
+        if self._outage_tile is not None:
+            try:
+                self.controls.remove(self._outage_tile)
+            except ValueError:
+                pass
+            self._outage_tile = None
+
+    def retry_now(self, e=None) -> None:
+        """Manual retry from the outage placeholder button."""
+        self._transient_failures = 0
+        self._outage_notified = False
+        self._poll_scheduled = False
+        page = getattr(self, "page", None)
+        if page is None:
+            return
+        page.run_task(self.load_more)
+
+    async def _poll_with_delay(self, delay: float) -> None:
+        """Slow re-poll while the grid is still empty after an outage."""
+        await asyncio.sleep(delay)
+        self._poll_scheduled = False
+        if not self._wallpapers and self.has_more:
+            await self.load_more()
+
+    def _schedule_poll(self) -> None:
+        """Schedule one slow re-poll if the grid is empty."""
+        if self._poll_scheduled or self._wallpapers:
+            return
+        page = getattr(self, "page", None)
+        if page is None:
+            return
+        self._poll_scheduled = True
+        page.run_task(self._poll_with_delay, self.OUTAGE_POLL_DELAY)
 
     @staticmethod
     def _is_transient_error(exc: Exception) -> bool:
@@ -389,7 +574,11 @@ class MiddlePanel(GridView, LoggerMixin):
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Wallpaper index is - {index}.")
-        self.right_panel.update_preview(wallpaper, index)
+        bus.publish(
+            getattr(self, "page", None),
+            bus.TOPIC_PREVIEW,
+            {"wallpaper": wallpaper, "index": index},
+        )
 
     def handle_image_double_click(self, e) -> None:
         """Show the resolution chooser for the double-clicked wallpaper.
@@ -400,4 +589,8 @@ class MiddlePanel(GridView, LoggerMixin):
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Download requested for index - {index}.")
-        self.right_panel.request_download(wallpaper)
+        bus.publish(
+            getattr(self, "page", None),
+            bus.TOPIC_DOWNLOAD_REQUEST,
+            {"wallpaper": wallpaper},
+        )
