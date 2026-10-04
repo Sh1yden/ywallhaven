@@ -222,6 +222,7 @@ themes/user_*.json
 themes/custom_*.json
 !themes/*.example
 !themes/README.md
+!themes/README.en.md
 
 # Generated at build time
 app/core/_version.py

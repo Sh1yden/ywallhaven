@@ -160,14 +160,14 @@ drop `themes/my_theme.json` next to `config.json` or hit `Import` in setti
 }
 ```
 
-`seed` is required (generates the M3 palette), `colors` optionally overrides any `ColorScheme` tokens (see `themes/README.md` and `app/interface/themes/schema.py`). Legacy `"dark"/"light"` in `config.json` migrate to `dark_default/light_default`.
+`seed` is required (generates the M3 palette), `colors` optionally overrides any `ColorScheme` tokens (see `themes/README.en.md` and `app/interface/themes/schema.py`). Legacy `"dark"/"light"` in `config.json` migrate to `dark_default/light_default`.
 
-##### More details in [THEMES README](themes/README.md).
+##### More details in [THEMES README](themes/README.en.md).
 
 ### 🧪 Tests
 
 Live in the `tests` directory.
-Coverage at the moment: 74%.
+Coverage at the moment: `74%`.
 
 ### 📑 Config structure
 
@@ -207,7 +207,7 @@ Coverage at the moment: 74%.
   - `main.py` - entry point: app mode, logging, Flet launch.
 - `updater/` - standalone executable for auto-update (`main.py`).
 - `docs/` - docs and assets: `docs/assets/` (icons `icon.{png,svg,ico}`).
-- `themes/` - custom themes `*.json` + `example_*.json` samples (see `themes/README.md`).
+- `themes/` - custom themes `*.json` + `example_*.json` samples (see `themes/README.en.md`).
 - `scripts/` - `build.py` (exe build: version, icon, PyInstaller), `package_release.py` (zip + `SHA256SUMS.txt`), `smoke_wallhaven.py` (live API check with no mocks).
 - `tests/` - pytest tests.
 - `ywallhaven.spec` and `ywallhaven-updater.spec` - PyInstaller specs for building both exes.
