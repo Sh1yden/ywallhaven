@@ -86,6 +86,29 @@ def set_wallpaper(image_path: str):
   `certutil`/`sha256sum`, строка про автосборку убрана.
 - [x] Восстановлен `run.py` (шим для спеков, win-сборка была
   сломана на main).
+- [x] Вырезан десктопный GUI-стек из Linux-бандла (мгновенное
+  закрытие AppImage из-за `LD_LIBRARY_PATH` + старый GTK).
+
+## [0.13.1] - 2026-10-15
+
+### Исправлено
+
+- Мгновенное закрытие AppImage после старта
+  (`ywallhaven-linux.spec`): PyInstaller стаскивал в `_internal`
+  чужой стек GTK/X11, bootloader прописывал на него
+  `LD_LIBRARY_PATH`, и внешний Flet-клиент грузил старые
+  `libglib`/`libgtk` вместо системных — смерть с `undefined
+  symbol: g_once_init_enter_pointer` без своих логов. Введён
+  фильтр `GUI_LIB_PREFIXES` (бандл −35МБ); оставлено нужное
+  процессу: кодеки картинок, `freetype`/`fontconfig`,
+  `ssl`/`crypto`, `sqlite`, `libstdc++`.
+- Проверка регрессии: `tests/test_linux_spec.py` сторожит
+  список (десктопное дропается, рантаймное хранится).
+
+### Изменено
+
+- Релиз `0.13.0` помечен пре-релизом: сломанный AppImage
+  не должен разъезжаться автоапдейтом до выхода `0.13.1`.
 
 ## [0.13.0] - 2026-10-15
 
@@ -715,7 +738,8 @@ def set_wallpaper(image_path: str):
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.12.0...HEAD
+[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.10.0...v0.11.0

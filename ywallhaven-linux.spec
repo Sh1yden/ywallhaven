@@ -17,6 +17,55 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+# The PyInstaller bootloader exports LD_LIBRARY_PATH pointing at the
+# bundle, and the externally launched Flet view client (~/.flet) would
+# resolve these older copies instead of the system ones, dying with
+# "undefined symbol" errors. Our process never loads them (no
+# gi/tkinter/webview anywhere in app/), so drop the whole desktop/GUI
+# closure: GTK stack, X11/XCB, dbus/systemd and their helpers.
+# Kept on purpose: image codecs (Pillow runtime), freetype/fontconfig,
+# ssl/crypto, compression, icu/sqlite, libstdc++.
+GUI_LIB_PREFIXES = (
+    "libgtk-3",
+    "libgdk",
+    "libglib-2.0",
+    "libgobject-2.0",
+    "libgio-2.0",
+    "libgmodule",
+    "libcairo",
+    "libpango",
+    "libatk",
+    "libatspi",
+    "libharfbuzz",
+    "libfribidi",
+    "libpixman",
+    "libepoxy",
+    "libglycin",
+    "libcloudproviders",
+    "libdatrie",
+    "libthai",
+    "libtinysparql",
+    "libsecret",
+    "libjson-glib",
+    "libgraphite2",
+    "libX",
+    "libxcb",
+    "libxkb",
+    "libdbus-1",
+    "libsystemd",
+    "libtss2",
+    "libseccomp",
+    "libmount",
+    "libblkid",
+    "libgcrypt",
+    "libgpg-error",
+)
+a.binaries = [
+    entry
+    for entry in a.binaries
+    if not entry[0].startswith(GUI_LIB_PREFIXES)
+]
 pyz = PYZ(a.pure)
 
 exe = EXE(
