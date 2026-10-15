@@ -88,6 +88,30 @@ def set_wallpaper(image_path: str):
   сломана на main).
 - [x] Вырезан десктопный GUI-стек из Linux-бандла (мгновенное
   закрытие AppImage из-за `LD_LIBRARY_PATH` + старый GTK).
+- [x] Почищен `LD_LIBRARY_PATH` для внешнего Flet-клиента
+  (старые `libfontconfig`/`libfreetype` из бандла роняли
+  системный `libpangoft2`; процесс свои либы резолвит
+  как раньше).
+
+## [0.13.2] - 2026-10-15
+
+### Исправлено
+
+- AppImage снова мгновенно закрывался после `0.13.1`:
+  системный `libpangoft2` требовал новый `FcConfigSetDefaultSubstitute`,
+  а загрузчик подсовывал ему старый `libfontconfig` из бандла.
+  Добивать список исключений спека дальше бессмысленно —
+  вместо этого окружение дочернего Flet-клиента чистится
+  точечно (`app/interface/client_env.py`: из `LD_LIBRARY_PATH`
+  убираются только записи бандла), процесс свои библиотеки
+  резолвит как раньше (TLS, Pillow, sqlite не тронуты).
+- Патч применяется до `flet.run()` в `app/main.py`
+  (клиент спавнится внутри `run` — позже уже поздно),
+  только во frozen-сборке, идемпотентно, с гардом
+  на отсутствие шва `flet_desktop`.
+- Тесты `tests/test_client_env.py` (6): чистка env, скип
+  вне frozen, шов против настоящего `flet_desktop`,
+  идемпотентность. Итог: `254 passed, 1 skipped`.
 
 ## [0.13.1] - 2026-10-15
 
@@ -738,7 +762,8 @@ def set_wallpaper(image_path: str):
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.1...HEAD
+[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.11.0...v0.12.0

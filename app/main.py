@@ -103,6 +103,16 @@ def main():
         _lg.debug(f"Config data is - {config.data}.")
         _lg.debug("Success ;)")
 
+        # Frozen Linux: keep the external Flet view client away from
+        # the bundled GUI libs (LD_LIBRARY_PATH poisoning). Must run
+        # before flet.run(), which spawns the client process.
+        try:
+            from app.interface.client_env import patch_flet_client_env
+
+            patch_flet_client_env()
+        except Exception as e:
+            _lg.debug(f"Flet client env patch failed: {e}.")
+
         run(
             main=flet_main,
             view=AppView.FLET_APP,
