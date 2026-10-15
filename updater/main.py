@@ -110,17 +110,33 @@ def _wait_for_exit(pid: int, timeout: float, logger: logging.Logger) -> bool:
 def _restart(dst: Path, logger: logging.Logger) -> None:
     """Launch the replaced application detached from this process.
 
+    On Windows the detached flags mirror the previous behavior. On
+    POSIX the replacement (an AppImage on Linux) is ensured
+    executable first, then started in a new session.
+
     Args:
         dst: Path of the replaced executable.
         logger: Logger for status messages.
     """
-    flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP
-    subprocess.Popen(
-        [str(dst)],
-        cwd=str(dst.parent),
-        creationflags=flags,
-        close_fds=True,
-    )
+    if sys.platform == "win32":
+        flags = 0x00000008 | 0x00000200  # DETACHED_PROCESS, CREATE_NEW_PROCESS_GROUP
+        subprocess.Popen(
+            [str(dst)],
+            cwd=str(dst.parent),
+            creationflags=flags,
+            close_fds=True,
+        )
+    else:
+        try:
+            os.chmod(dst, 0o755)
+        except OSError as e:
+            logger.warning(f"chmod +x failed for {dst}: {e}")
+        subprocess.Popen(
+            [str(dst)],
+            cwd=str(dst.parent),
+            start_new_session=True,
+            close_fds=True,
+        )
     logger.info(f"Restarted {dst}.")
 
 
@@ -140,12 +156,20 @@ def main() -> int:
         logger.error(f"Source file missing: {args.src}")
         try:
             parent = args.src.parent
-            existing = list(parent.glob("ywallhaven-*-update.exe"))
+            existing = list(parent.glob("ywallhaven-*-update.*"))
             logger.error(f"Src parent listing: {existing}")
             logger.error(f"Src resolve: {args.src.resolve() if args.src.exists() else 'no resolve'}")
         except Exception as ex:
             logger.error(f"Failed to list src parent: {ex}")
         return 1
+
+    if sys.platform != "win32":
+        # The replacement must stay executable (AppImage bit can be
+        # lost in transit); best effort, replace proceeds anyway.
+        try:
+            os.chmod(args.src, 0o755)
+        except OSError as ex:
+            logger.warning(f"chmod +x failed for {args.src}: {ex}")
 
     if not _wait_for_exit(args.pid, WAIT_TIMEOUT_SECONDS, logger):
         logger.error(f"Process {args.pid} did not exit in "

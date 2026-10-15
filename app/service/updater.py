@@ -64,16 +64,20 @@ def launch_elevated_windows(
 
 
 class UpdaterService(LoggerMixin):
-    """Check GitHub releases, download and install the new executable.
+    """Check GitHub releases, download and install the new version.
 
-    The downloaded ``ywallhaven.exe`` is handed over to the standalone
-    ``ywallhaven-updater.exe`` helper, which waits for this process to
-    exit, replaces the running executable and restarts the app.
+    On Windows the downloaded ``ywallhaven.exe`` is handed over to the
+    standalone ``ywallhaven-updater.exe`` helper. On Linux the
+    ``YWallhaven-*-x86_64.AppImage`` asset is handed to the
+    ``ywallhaven-updater`` ELF bundled next to the main binary, which
+    replaces the file pointed at by ``$APPIMAGE``.
     """
 
     REPO = "Sh1yden/ywallhaven"
     API_URL = "https://api.github.com"
     ASSET_NAME = "ywallhaven.exe"
+    LINUX_ASSET_PREFIX = "YWallhaven-"
+    LINUX_ASSET_SUFFIX = ".AppImage"
     REQUEST_TIMEOUT = 15.0
     CHUNK_SIZE = 64 * 1024
     PER_PAGE = 10
@@ -202,10 +206,40 @@ class UpdaterService(LoggerMixin):
             return None
 
     def find_asset(self, release: ReleaseInfo) -> AssetInfo | None:
-        """Return the app asset of a release, or None."""
+        """Return the app asset of a release, or None.
+
+        Windows matches the exact ``ywallhaven.exe`` name; other
+        platforms match ``YWallhaven-*-x86_64.AppImage`` by
+        prefix/suffix since the tag is baked into the file name.
+        """
+        if sys.platform == "win32":
+            return next(
+                (a for a in release.assets if a.name == self.ASSET_NAME),
+                None,
+            )
         return next(
-            (a for a in release.assets if a.name == self.ASSET_NAME), None
+            (
+                a
+                for a in release.assets
+                if a.name.startswith(self.LINUX_ASSET_PREFIX)
+                and a.name.endswith(self.LINUX_ASSET_SUFFIX)
+            ),
+            None,
         )
+
+    @staticmethod
+    def _helper_name() -> str:
+        """Return the updater helper file name for this platform."""
+        if sys.platform == "win32":
+            return "ywallhaven-updater.exe"
+        return "ywallhaven-updater"
+
+    @staticmethod
+    def _download_suffix() -> str:
+        """Return the temp download suffix for this platform."""
+        if sys.platform == "win32":
+            return ".exe"
+        return ".AppImage"
 
     # Downloading --------------------------------------------------
 
@@ -226,12 +260,15 @@ class UpdaterService(LoggerMixin):
         """
         asset = self.find_asset(release)
         if asset is None:
-            self._lg.error(f"No {self.ASSET_NAME} asset in {release.tag_name}.")
+            self._lg.error(
+                f"No update asset in {release.tag_name}."
+            )
             return None
 
         target = (
             Path(gettempdir())
-            / f"ywallhaven-{release.tag_name.lstrip('v')}-update.exe"
+            / f"ywallhaven-{release.tag_name.lstrip('v')}-update"
+            f"{self._download_suffix()}"
         )
         total = 0
         downloaded = 0
@@ -318,10 +355,17 @@ class UpdaterService(LoggerMixin):
     # Applying -----------------------------------------------------
 
     def launch_updater(self, downloaded: Path) -> bool:
-        """Hand the new executable to the ywallhaven-updater helper.
+        """Hand the new version to the ywallhaven-updater helper.
+
+        On Windows the target is the running ``.exe`` (elevation via
+        UAC when needed). On Linux the target is the ``$APPIMAGE``
+        file when the app runs from one, otherwise the running
+        binary; the helper needs write permission there — UAC-style
+        elevation does not exist, so an unwritable location fails
+        with an explicit message instead.
 
         Args:
-            downloaded: Verified path of the new executable.
+            downloaded: Verified path of the new version file.
 
         Returns:
             True when the helper was started successfully. On failure
@@ -359,12 +403,23 @@ class UpdaterService(LoggerMixin):
             )
             return False
 
-        helper = exe_path.parent / "ywallhaven-updater.exe"
+        helper = exe_path.parent / self._helper_name()
         _upd_lg.debug(f"Expecting updater helper at: {helper}.")
         if not helper.is_file():
             self._lg.error(f"Updater helper not found: {helper}.")
             _upd_lg.error(f"Updater helper not found: {helper}.")
             self.last_launch_error = f"updater helper not found: {helper}"
+            return False
+
+        dst = self._update_target(exe_path)
+        if sys.platform != "win32" and not os.access(dst, os.W_OK):
+            reason = (
+                f"no write permission for {dst} "
+                "(move the AppImage to a writable location)"
+            )
+            self._lg.error(reason + ".")
+            _upd_lg.error(reason + ".")
+            self.last_launch_error = reason
             return False
 
         log_path = exe_path.parent / "ywallhaven_updater.log"
@@ -379,7 +434,7 @@ class UpdaterService(LoggerMixin):
             if not exists:
                 # List temp dir for debugging
                 tmp_files = list(
-                    Path(gettempdir()).glob("ywallhaven-*-update.exe")
+                    Path(gettempdir()).glob("ywallhaven-*-update.*")
                 )
                 self._lg.error(f"Temp update files present: {tmp_files}")
                 _upd_lg.error(
@@ -397,7 +452,7 @@ class UpdaterService(LoggerMixin):
             str(helper),
             "--pid", str(os.getpid()),
             "--src", str(downloaded),
-            "--dst", str(exe_path),
+            "--dst", str(dst),
             "--log", str(log_path),
             "--restart",
         ]
@@ -427,9 +482,8 @@ class UpdaterService(LoggerMixin):
             Popen(
                 command,
                 cwd=str(exe_path.parent),
-                creationflags=(
-                    0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
-                ),
+                start_new_session=True,
+                close_fds=True,
             )
             _upd_lg.info("Updater helper started; shutting down...")
             self._lg.info("Updater helper started; shutting down...")
@@ -439,6 +493,26 @@ class UpdaterService(LoggerMixin):
             _upd_lg.error(f"Failed to start the updater helper: {e}.")
             self.last_launch_error = f"failed to start updater helper: {e}"
             return False
+
+    @staticmethod
+    def _update_target(exe_path: Path) -> Path:
+        """Return the file the helper must replace.
+
+        Inside an AppImage the running binary lives on a read-only
+        squashfs mount, so the target is the ``$APPIMAGE`` file
+        itself. Anywhere else it is the running executable.
+
+        Args:
+            exe_path: Resolved path of the running executable.
+
+        Returns:
+            Update target path for the helper ``--dst``.
+        """
+        appimage = os.environ.get("APPIMAGE", "")
+        if appimage and Path(appimage).is_file():
+            _upd_lg.debug(f"Running from AppImage: {appimage}.")
+            return Path(appimage)
+        return exe_path
 
     async def __aenter__(self) -> "UpdaterService":
         return self

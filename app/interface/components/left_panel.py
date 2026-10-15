@@ -99,15 +99,17 @@ class LeftPanel(Container, LoggerMixin):
         super().will_unmount()
 
     def _subscribe_bus(self) -> None:
-        """Listen for tag searches and API-key updates."""
+        """Listen for tag/color searches and API-key updates."""
         page = getattr(self, "page", None)
         bus.subscribe(page, bus.TOPIC_TAG, self._on_tag_message)
+        bus.subscribe(page, bus.TOPIC_COLOR, self._on_color_message)
         bus.subscribe(page, bus.TOPIC_API_KEY, self._on_api_key_message)
 
     def _unsubscribe_bus(self) -> None:
-        """Stop listening for tag searches and API-key updates."""
+        """Stop listening for tag/color searches and API-key updates."""
         page = getattr(self, "page", None)
         bus.unsubscribe(page, bus.TOPIC_TAG)
+        bus.unsubscribe(page, bus.TOPIC_COLOR)
         bus.unsubscribe(page, bus.TOPIC_API_KEY)
 
     def _on_tag_message(self, topic: str, message: Any) -> None:
@@ -120,6 +122,17 @@ class LeftPanel(Container, LoggerMixin):
         name = (message or {}).get("name", "")
         if name:
             self.search_tag(name)
+
+    def _on_color_message(self, topic: str, message: Any) -> None:
+        """Search for a color received over the bus.
+
+        Args:
+            topic: Bus topic (always TOPIC_COLOR here).
+            message: {"color": str} payload (hex, no '#').
+        """
+        color = (message or {}).get("color", "")
+        if color:
+            self.search_color(str(color))
 
     def _on_api_key_message(self, topic: str, message: Any) -> None:
         """Apply an API key received over the bus.
@@ -475,7 +488,17 @@ class LeftPanel(Container, LoggerMixin):
             filters["categories"] = categories
         if purity:
             filters["purity"] = purity
-        filters["sorting"] = self._sorting_dd.value or "date_added"
+        filters["sorting"] = sorting = (
+            self._sorting_dd.value or "date_added"
+        )
+        # Empty query has no defined relevance order: Wallhaven
+        # returns data:[] for q="" + relevance despite total>0,
+        # which middle_panel reads as end-of-feed and latches
+        # has_more=False on a cleared grid. Fall back to the
+        # default feed instead of publishing an invalid combo.
+        if not query and sorting == "relevance":
+            sorting = "date_added"
+            filters["sorting"] = sorting
         filters["order"] = self._order_dd.value or "desc"
         if self._atleast_dd.value and self._atleast_dd.value != "Any":
             filters["atleast"] = self._atleast_dd.value
@@ -483,7 +506,7 @@ class LeftPanel(Container, LoggerMixin):
             filters["ratios"] = self._ratios_dd.value
         if self._colors_dd.value:
             filters["colors"] = self._colors_dd.value
-        if self._sorting_dd.value == "toplist":
+        if sorting == "toplist":
             filters["topRange"] = self._top_range_dd.value or "1M"
 
         return filters
@@ -493,12 +516,26 @@ class LeftPanel(Container, LoggerMixin):
         api_key = config.data.APIK
         query = (self._search_field.value or "").strip()
 
+        # Relevance without a query is invalid (Wallhaven returns
+        # data:[] with total>0). Fall back to the default feed
+        # instead of blocking with an error or wiping the gallery.
         if self._sorting_dd.value == "relevance" and not query:
-            self._search_field.error = (
-                "Relevance sorting requires a search query"
+            self._sorting_dd.value = "date_added"
+            self._top_range_dd.visible = False
+            if self._search_field.error:
+                self._search_field.error = None
+                try:
+                    self._search_field.update()
+                except Exception:
+                    pass
+            try:
+                self.update()
+            except Exception:
+                pass
+            self._lg.debug(
+                "Empty query with relevance sorting: "
+                "falling back to date_added."
             )
-            self._search_field.update()
-            return
 
         masked = f"{api_key[:4]}***" if api_key else "<empty>"
         self._lg.debug(f"Applied filters (api key: {masked}).")
@@ -516,6 +553,49 @@ class LeftPanel(Container, LoggerMixin):
         """
         self._search_field.value = name
         self._search_field.update()
+        self._apply()
+
+    @staticmethod
+    def _normalize_color_hex(raw: Any) -> str | None:
+        """Normalize a color payload to a 6-char hex string.
+
+        Args:
+            raw: Raw color value (with or without '#').
+
+        Returns:
+            Lowercase hex without '#', or None when invalid.
+        """
+        if raw is None:
+            return None
+        text = str(raw).strip().lstrip("#").lower()
+        if len(text) != 6:
+            return None
+        if any(c not in "0123456789abcdef" for c in text):
+            return None
+        return text
+
+    def search_color(self, color: str) -> None:
+        """Set the color filter and apply it immediately.
+
+        Wallpaper colors are arbitrary hex values, usually not in
+        the preset dropdown, so an unknown value is added as a
+        dynamic option before selecting it.
+
+        Args:
+            color: Hex color value (with or without '#').
+        """
+        norm = self._normalize_color_hex(color)
+        if norm is None:
+            return
+        if all(opt.key != norm for opt in self._colors_dd.options):
+            self._colors_dd.options.append(
+                DropdownOption(key=norm, text=f"#{norm}")
+            )
+        self._colors_dd.value = norm
+        try:
+            self._colors_dd.update()
+        except Exception:
+            pass
         self._apply()
 
     def set_api_key(self, api_key: str) -> None:

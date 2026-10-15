@@ -384,9 +384,9 @@ async def _build_ui(page: Page) -> None:
     async def set_wallpaper(url: str) -> None:
         """Download a wallpaper and set it as the desktop background.
 
-        Windows only: the button is hidden on other platforms. Uses the
-        physical monitor size, keeps the original file when its ratio
-        matches, otherwise downscales; animated images are refused.
+        Supported platforms only (the button is hidden elsewhere).
+        The backend keeps the original file when its ratio matches
+        the monitor, otherwise downscales; animated images refused.
         Scheduled from the right panel via page.run_task.
 
         Args:
@@ -458,6 +458,14 @@ async def _build_ui(page: Page) -> None:
     )
     current_theme = get_theme(config.data.THEME)
     theme_label = current_theme.name if current_theme else config.data.THEME
+    theme_chip = Text(
+        theme_label,
+        size=11,
+        weight="w500",
+        color=Colors.ON_SURFACE_VARIANT,
+    )
+    # Pinned for live updates after Save in settings (theme chip).
+    page._ywallhaven_theme_label = theme_chip
 
     # C3: polished header as surface container card + divider
     header = Container(
@@ -478,12 +486,7 @@ async def _build_ui(page: Page) -> None:
                     padding=6,
                     border_radius=20,
                     bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
-                    content=Text(
-                        theme_label,
-                        size=11,
-                        weight="w500",
-                        color=Colors.ON_SURFACE_VARIANT,
-                    ),
+                    content=theme_chip,
                 ),
                 Container(expand=True, content=Text("")),
                 IconButton(

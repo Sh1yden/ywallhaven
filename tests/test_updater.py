@@ -73,7 +73,8 @@ def make_updater(
 
 
 @pytest.mark.asyncio
-async def test_returns_newer_release():
+async def test_returns_newer_release(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     payloads = [release_payload("v0.6.0")]
     updater = make_updater(payloads)
 
@@ -97,7 +98,8 @@ async def test_returns_none_when_up_to_date():
 
 
 @pytest.mark.asyncio
-async def test_skips_prereleases_by_default():
+async def test_skips_prereleases_by_default(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     payloads = [
         release_payload("v0.7.0-rc1", prerelease=True),
         release_payload("v0.6.0"),
@@ -112,7 +114,8 @@ async def test_skips_prereleases_by_default():
 
 
 @pytest.mark.asyncio
-async def test_offers_prereleases_when_enabled():
+async def test_offers_prereleases_when_enabled(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     payloads = [release_payload("v0.7.0-rc1", prerelease=True)]
     updater = make_updater(payloads, check_prereleases=True)
 
@@ -186,7 +189,8 @@ async def test_releases_url_has_no_trailing_slash():
 
 
 @pytest.mark.asyncio
-async def test_download_asset_writes_file():
+async def test_download_asset_writes_file(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     payloads = [release_payload("v0.6.0")]
     updater = make_updater(payloads)
     release = await updater.check_update()
@@ -271,7 +275,8 @@ async def test_download_asset_returns_none_without_asset():
 
 
 @pytest.mark.asyncio
-async def test_download_asset_reports_progress():
+async def test_download_asset_reports_progress(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
     payloads = [release_payload("v0.6.0")]
     updater = make_updater(payloads)
     release = await updater.check_update()
@@ -348,6 +353,7 @@ async def test_launch_updater_reports_missing_helper(
 @pytest.mark.asyncio
 async def test_launch_updater_starts_helper(monkeypatch, tmp_path):
     updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "win32")
     fake_exe = tmp_path / "ywallhaven.exe"
     helper = tmp_path / "ywallhaven-updater.exe"
     src = tmp_path / "new-update.exe"
@@ -358,18 +364,20 @@ async def test_launch_updater_starts_helper(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "frozen", True, raising=False)
     monkeypatch.setattr(sys, "executable", str(fake_exe))
 
-    started: list[list[str]] = []
+    started: list = []
     monkeypatch.setattr(
         updater_module,
-        "Popen",
-        lambda command, **kwargs: started.append(command),
+        "launch_elevated_windows",
+        lambda h, argv, cwd: started.append((h, argv, cwd))
+        or (True, ""),
     )
 
     assert updater.launch_updater(src) is True
     assert updater.last_launch_error == ""
     assert started
-    assert "--pid" in started[0]
-    assert "--restart" in started[0]
+    assert started[0][0] == helper
+    assert "--pid" in started[0][1]
+    assert "--restart" in started[0][1]
     await updater.close()
 
 
@@ -438,6 +446,7 @@ async def test_launch_updater_uses_elevation_on_windows(
     monkeypatch, tmp_path
 ):
     updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "win32")
     fake_exe = tmp_path / "ywallhaven.exe"
     helper = tmp_path / "ywallhaven-updater.exe"
     src = tmp_path / "new-update.exe"
@@ -470,6 +479,7 @@ async def test_launch_updater_reports_cancelled_elevation(
     monkeypatch, tmp_path
 ):
     updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "win32")
     fake_exe = tmp_path / "ywallhaven.exe"
     helper = tmp_path / "ywallhaven-updater.exe"
     src = tmp_path / "new-update.exe"
@@ -601,3 +611,221 @@ def test_replace_logic(tmp_path: Path):
 
     assert exit_code == 0
     assert dst.read_bytes() == b"new"
+
+
+# Linux updater ----------------------------------------------------
+
+
+def _appimage_payload(tag: str) -> dict:
+    """Build a fake release payload carrying an AppImage asset."""
+    name = f"YWallhaven-{tag}-x86_64.AppImage"
+    return release_payload(tag, asset_name=name)
+
+
+@pytest.mark.asyncio
+async def test_returns_appimage_release_on_linux(monkeypatch):
+    payloads = [_appimage_payload("v0.6.0")]
+    monkeypatch.setattr(sys, "platform", "linux")
+    updater = make_updater(payloads)
+
+    release = await updater.check_update()
+
+    assert release is not None
+    assert release.tag_name == "v0.6.0"
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_ignores_exe_asset_on_linux(monkeypatch):
+    payloads = [release_payload("v0.6.0")]
+    monkeypatch.setattr(sys, "platform", "linux")
+    updater = make_updater(payloads)
+
+    release = await updater.check_update()
+
+    assert release is None
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_download_asset_uses_appimage_suffix(monkeypatch):
+    payloads = [_appimage_payload("v0.6.0")]
+    monkeypatch.setattr(sys, "platform", "linux")
+    updater = make_updater(payloads)
+    release = await updater.check_update()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-length": "3"},
+            content=b"exe",
+        )
+
+    updater.client = httpx.AsyncClient(
+        base_url=UpdaterService.API_URL,
+        transport=httpx.MockTransport(handler),
+    )
+
+    path = await updater.download_asset(release)
+
+    assert path is not None
+    assert path.name.endswith("-update.AppImage")
+    path.unlink(missing_ok=True)
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_linux_starts_helper(monkeypatch, tmp_path):
+    updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "linux")
+    fake_exe = tmp_path / "ywallhaven"
+    helper = tmp_path / "ywallhaven-updater"
+    src = tmp_path / "new-update.AppImage"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+
+    started: list = []
+
+    def _popen(command, **kwargs):
+        started.append((command, kwargs))
+        return None
+
+    monkeypatch.setattr(updater_module, "Popen", _popen)
+
+    assert updater.launch_updater(src) is True
+    assert updater.last_launch_error == ""
+    assert started
+    command, kwargs = started[0]
+    assert "--dst" in command
+    assert command[command.index("--dst") + 1] == str(
+        fake_exe.resolve()
+    )
+    assert kwargs.get("start_new_session") is True
+    assert "creationflags" not in kwargs
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_linux_prefers_appimage_env(
+    monkeypatch, tmp_path
+):
+    updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "linux")
+    inner = tmp_path / "inner"
+    inner.mkdir()
+    fake_exe = inner / "ywallhaven"
+    helper = inner / "ywallhaven-updater"
+    appimage = tmp_path / "YWallhaven.AppImage"
+    src = tmp_path / "new-update.AppImage"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    appimage.write_bytes(b"old-image")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+    monkeypatch.setenv("APPIMAGE", str(appimage))
+
+    started: list = []
+    monkeypatch.setattr(
+        updater_module,
+        "Popen",
+        lambda command, **kwargs: started.append(command),
+    )
+
+    assert updater.launch_updater(src) is True
+    assert started
+    command = started[0]
+    assert command[command.index("--dst") + 1] == str(appimage)
+    await updater.close()
+
+
+@pytest.mark.asyncio
+async def test_launch_updater_linux_refuses_unwritable(
+    monkeypatch, tmp_path
+):
+    updater = make_updater([])
+    monkeypatch.setattr(sys, "platform", "linux")
+    fake_exe = tmp_path / "ywallhaven"
+    helper = tmp_path / "ywallhaven-updater"
+    src = tmp_path / "new-update.AppImage"
+    fake_exe.write_bytes(b"app")
+    helper.write_bytes(b"helper")
+    src.write_bytes(b"new")
+
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(fake_exe))
+    monkeypatch.setattr(updater_module.os, "access", lambda p, m: False)
+
+    assert updater.launch_updater(src) is False
+    assert "write permission" in updater.last_launch_error
+    await updater.close()
+
+
+def test_restart_posix_detaches_and_chmod(monkeypatch, tmp_path):
+    import updater.main as helper_main
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    dst = tmp_path / "YWallhaven.AppImage"
+    dst.write_bytes(b"app")
+    dst.chmod(0o644)
+
+    started: list = []
+    monkeypatch.setattr(
+        helper_main.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: started.append((cmd, kwargs)),
+    )
+
+    helper_main._restart(dst, helper_main._setup_logger(
+        type("Args", (), {"log": tmp_path / "h.log"})()
+    ))
+
+    assert dst.stat().st_mode & 0o111
+    assert started
+    _cmd, kwargs = started[0]
+    assert kwargs.get("start_new_session") is True
+    assert "creationflags" not in kwargs
+
+
+def test_helper_main_replaces_and_restarts_posix(
+    monkeypatch, tmp_path
+):
+    import updater.main as helper_main
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    src = tmp_path / "new.AppImage"
+    dst = tmp_path / "YWallhaven.AppImage"
+    src.write_bytes(b"new")
+    src.chmod(0o644)
+    dst.write_bytes(b"old")
+
+    started: list = []
+    monkeypatch.setattr(
+        helper_main.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: started.append(cmd),
+    )
+
+    old_argv = sys.argv
+    sys.argv = [
+        "updater",
+        "--pid", str(2**31 - 1),
+        "--src", str(src),
+        "--dst", str(dst),
+        "--log", str(tmp_path / "updater.log"),
+        "--restart",
+    ]
+    try:
+        exit_code = helper_main.main()
+    finally:
+        sys.argv = old_argv
+
+    assert exit_code == 0
+    assert dst.read_bytes() == b"new"
+    assert dst.stat().st_mode & 0o111
+    assert started

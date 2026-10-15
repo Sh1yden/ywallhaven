@@ -100,12 +100,15 @@ def apply_theme(page, theme_id: str) -> ThemeDefinition:
         ThemeMode.DARK if td.mode == "dark" else ThemeMode.LIGHT
     )
 
-    # Try update if page is already mounted
+    # Push to the live client when mounted; a detached page in
+    # unit tests simply records the call via its update stub.
     try:
-        if getattr(page, "_Control__uid", None) is not None:
-            page.update()
+        page.update()
     except Exception as e:
-        _lg.debug(f"Deferred theme update (page not mounted): {e}", exc_info=True)
+        _lg.debug(
+            f"Deferred theme update (page not mounted): {e}",
+            exc_info=True,
+        )
 
     _lg.debug(f"Applied theme '{td.id}' mode={td.mode}")
     return td

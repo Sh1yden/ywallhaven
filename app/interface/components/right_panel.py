@@ -1,7 +1,6 @@
 """Right panel: preview and properties of the selected wallpaper."""
 
 import os
-import sys
 import time
 from typing import Any, Callable, Dict, List
 
@@ -37,6 +36,7 @@ from app.core import get_logger
 from app.core.resources import register
 from app.interface import bus
 from app.service import WallhavenAPI
+from app.service.wallpaper import is_supported as is_wallpaper_supported
 
 _lg = get_logger()
 
@@ -255,9 +255,11 @@ class RightPanel(Container):
     def _build_download_button(self) -> Container:
         """Build the download row with the set-as-wallpaper button.
 
-        C3: Sticky container with the expanded download button plus the
-        Windows-only wallpaper button. On non-Windows the wallpaper
-        button is omitted entirely (not just disabled).
+        C3: Sticky container with the expanded download button plus
+        the platform wallpaper button. On unsupported platforms
+        (e.g. Android) the wallpaper button is omitted entirely
+        (not just disabled); availability comes from the wallpaper
+        service backend, never from a ``sys.platform`` check here.
         """
         download = FilledButton(
             content="Download",
@@ -267,7 +269,7 @@ class RightPanel(Container):
             on_click=self._handle_download_click,
         )
         controls: List[Any] = [download]
-        if sys.platform == "win32":
+        if is_wallpaper_supported():
             controls.append(
                 IconButton(
                     icon=Icons.WALLPAPER,
@@ -296,8 +298,9 @@ class RightPanel(Container):
     def _handle_wallpaper_click(self, e) -> None:
         """Set the current wallpaper as the desktop background.
 
-        Windows only (the button is hidden elsewhere). The async
-        installer is scheduled via page.run_task.
+        Only reachable on supported platforms (the button is
+        hidden elsewhere). The async installer runs via bus +
+        page.run_task in flet_app.
 
         Args:
             e: Click event from the wallpaper button.
@@ -1002,33 +1005,101 @@ class RightPanel(Container):
 
         return f"{int(size) / (1024 * 1024):.2f} MB"
 
-    @staticmethod
-    def _make_colors_row(colors: Any) -> Row | None:
-        """Build a row of color dots.
+    def _make_colors_row(self, colors: Any) -> Row | None:
+        """Build a row of clickable color dots.
+
+        Each dot publishes its hex on the color bus topic,
+        which the left panel turns into a color filter search.
 
         Args:
             colors: List of hex color strings.
 
         Returns:
-            Wrapped row with color dots, or None if no colors are present.
+            Wrapped row with color dots, or None if no colors.
         """
         if not colors:
             return None
 
+        dots: List[Any] = []
+        for color in colors:
+            dot = Container(
+                width=18,
+                height=18,
+                border_radius=9,
+                bgcolor=color,
+                tooltip=self._color_tooltip(color),
+            )
+            if self._normalize_color(color) is None:
+                dots.append(dot)
+            else:
+                dots.append(
+                    GestureDetector(
+                        on_tap=self._make_color_handler(color),
+                        content=dot,
+                    )
+                )
+        if not dots:
+            return None
         return Row(
             wrap=True,
             spacing=6,
             run_spacing=6,
-            controls=[
-                Container(
-                    width=18,
-                    height=18,
-                    border_radius=9,
-                    bgcolor=color,
-                )
-                for color in colors
-            ],
+            controls=dots,
         )
+
+    @staticmethod
+    def _normalize_color(raw: Any) -> str | None:
+        """Normalize a raw color value to a 6-char hex string.
+
+        Args:
+            raw: Raw color value from the API (with or w/o '#').
+
+        Returns:
+            Lowercase hex without '#', or None when invalid.
+        """
+        if raw is None:
+            return None
+        text = str(raw).strip().lstrip("#").lower()
+        if len(text) != 6:
+            return None
+        if any(c not in "0123456789abcdef" for c in text):
+            return None
+        return text
+
+    @staticmethod
+    def _color_tooltip(raw: Any) -> str | None:
+        """Return a tooltip text for a color dot, if valid."""
+        norm = RightPanel._normalize_color(raw)
+        return f"#{norm}" if norm else None
+
+    def _make_color_handler(self, color: Any) -> Callable:
+        """Return a tap handler running a color search.
+
+        Args:
+            color: Raw color value of the dot.
+
+        Returns:
+            Click handler publishing the normalized hex.
+        """
+
+        def handler(e) -> None:
+            self._open_color(color)
+
+        return handler
+
+    def _open_color(self, color: Any) -> None:
+        """Publish a color search for the given dot.
+
+        Args:
+            color: Raw color value of the dot.
+        """
+        norm = self._normalize_color(color)
+        if norm:
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_COLOR,
+                {"color": norm},
+            )
 
     def _make_tags_row(self, tags: Any) -> Row | None:
         """Build a row of clickable tag chips.

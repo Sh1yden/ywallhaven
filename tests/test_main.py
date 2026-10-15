@@ -32,6 +32,23 @@ def test_cleanup_update_files_ignores_oserror(tmp_path, monkeypatch) -> None:
     main._cleanup_update_files()
 
 
+def test_cleanup_update_files_removes_appimage_leftovers(
+    tmp_path, monkeypatch
+) -> None:
+    import os
+    import time
+
+    leftover = tmp_path / "ywallhaven-0.12.0-update.AppImage"
+    leftover.write_bytes(b"x")
+    old = time.time() - 700
+    os.utime(leftover, (old, old))
+
+    monkeypatch.setattr(main, "gettempdir", lambda: str(tmp_path))
+    main._cleanup_update_files()
+
+    assert not leftover.exists()
+
+
 def test_trim_updater_log_removes_large_log(tmp_path, monkeypatch) -> None:
     exe = tmp_path / "ywallhaven.exe"
     exe.write_bytes(b"")

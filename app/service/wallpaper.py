@@ -1,19 +1,36 @@
-"""Windows desktop wallpaper installer (Wave 1, T2).
+"""Desktop wallpaper installer with per-platform backends.
 
-All Win32 logic lives here behind a ``sys.platform`` gate, so this
-module imports safely on Linux/macOS (where the "Set as Wallpaper"
-button is hidden entirely). The UI layer only calls
-:func:`set_wallpaper_from_url` and shows the returned ``(ok, message)``
-pair via ``flet_app._show_snack``.
+The UI layer only calls :func:`set_wallpaper_from_url` (or checks
+:func:`is_supported`) and shows the returned ``(ok, message)`` pair
+via ``flet_app._show_snack``. Platform differences live in small
+backend classes behind :func:`_select_backend`, so this module
+imports safely everywhere: ``ctypes.windll`` is touched only inside
+the Windows backend, ``subprocess`` tools only inside the Linux one.
+
+Backends:
+
+- Windows: ``SystemParametersInfoW`` + physical monitor size via
+  ``GetSystemMetrics`` (unchanged legacy behavior).
+- Linux: desktop-environment cascade (GNOME ``gsettings``,
+  KDE ``plasma-apply-wallpaperimage``/``qdbus``, XFCE
+  ``xfconf-query``, fallback ``feh``/``nitrogen``). Screen size is
+  reported as unknown (``None``), so images keep the
+  passthrough/convert path instead of a wrong resize.
+- Android and anything else: stub, always unavailable. The native
+  Android wiring (``WallpaperManager``) is intentionally left for
+  the future full Android client.
 
 Temp file policy: a single fixed file ``TEMP/ywallhaven-wallpaper.jpg``
 is overwritten on every install and never deleted right after applying
-(Windows requires the path to stay alive). It is removed only by
+(the OS requires the path to stay alive). It is removed only by
 :func:`cleanup_temp`, which the application shutdown routine calls.
 """
 
 import asyncio
 import ctypes
+import os
+import shutil
+import subprocess
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -33,14 +50,29 @@ SPIF_SENDCHANGE = 0x02
 WALLPAPER_TEMP_NAME = "ywallhaven-wallpaper.jpg"
 RATIO_TOLERANCE = 0.01
 
+_SUBPROCESS_TIMEOUT = 15.0
+
+_UNSUPPORTED_MESSAGE = (
+    "Setting wallpaper is not supported on this platform"
+)
+_NO_TOOL_MESSAGE = (
+    "No supported wallpaper tool found "
+    "(gsettings, plasma-apply-wallpaperimage, qdbus, "
+    "xfconf-query, feh, nitrogen)"
+)
+
 
 def is_supported() -> bool:
-    """Return True only on Windows (the Win32 wallpaper API).
+    """Return True on platforms with a wallpaper backend.
+
+    Windows and Linux have real backends (Linux tries several
+    desktop-environment tools at apply time). Android and other
+    platforms report False and the UI hides the button there.
 
     Returns:
-        True when ``sys.platform`` is ``win32``.
+        True on ``win32`` and Linux, False elsewhere.
     """
-    return sys.platform == "win32"
+    return _select_backend().supports
 
 
 def temp_path() -> Path:
@@ -53,25 +85,18 @@ def temp_path() -> Path:
 
 
 def get_screen_size() -> tuple[int, int] | None:
-    """Return the physical monitor size via ctypes GetSystemMetrics.
+    """Return the physical monitor size, or None when unknown.
 
-    Uses the OS metric (SM_CXSCREEN/SM_CYSCREEN), not ``page.window``.
+    Windows uses the OS metric (SM_CXSCREEN/SM_CYSCREEN), not
+    ``page.window``. Linux reports None (no reliable toolkit-free
+    probe), so images take the no-resize path.
 
     Returns:
-        (width, height) on Windows, or None when unavailable.
+        (width, height) on Windows, None elsewhere/unavailable.
     """
     if not is_supported():
         return None
-    try:
-        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
-        width = user32.GetSystemMetrics(0)
-        height = user32.GetSystemMetrics(1)
-    except Exception as e:
-        _lg.error(f"Failed to read screen size: {e}.")
-        return None
-    if not width or not height:
-        return None
-    return (int(width), int(height))
+    return _select_backend().screen_size()
 
 
 def _to_jpg(image: PILImage.Image, quality: int) -> bytes:
@@ -158,8 +183,8 @@ def pick_or_resize(
 def write_temp(data: bytes) -> Path | None:
     """Overwrite the fixed temp JPG with the given bytes.
 
-    The file is intentionally NOT deleted here: Windows requires the
-    wallpaper path to stay alive after ``SystemParametersInfoW``.
+    The file is intentionally NOT deleted here: the OS requires the
+    wallpaper path to stay alive after applying it.
 
     Args:
         data: JPG bytes to store.
@@ -177,30 +202,17 @@ def write_temp(data: bytes) -> Path | None:
 
 
 def apply_wallpaper(path: Path) -> bool:
-    """Point Windows at the given image path.
-
-    Reference snippet (CHANGELOG): ``SystemParametersInfoW(20, 0, path,
-    0x01 | 0x02)``.
+    """Point the desktop environment at the given image path.
 
     Args:
         path: Image file path to install as the desktop background.
 
     Returns:
-        True when Windows accepted the new wallpaper.
+        True when the OS accepted the new wallpaper.
     """
     if not is_supported():
         return False
-    try:
-        result = ctypes.windll.user32.SystemParametersInfoW(  # type: ignore[attr-defined]
-            SPI_SETDESKWALLPAPER,
-            0,
-            str(path.resolve()),
-            SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
-        )
-    except Exception as e:
-        _lg.error(f"Failed to set wallpaper: {e}.")
-        return False
-    return bool(result)
+    return _select_backend().apply(path)
 
 
 def cleanup_temp() -> None:
@@ -229,13 +241,13 @@ async def set_wallpaper_from_url(
     Args:
         fetch_bytes: Awaitable downloader returning bytes or None.
         url: Full-size wallpaper URL.
-        screen: Monitor size, or None to auto-detect via GetSystemMetrics.
+        screen: Monitor size, or None to auto-detect per platform.
 
     Returns:
         (ok, message) pair for the ``_show_snack`` call.
     """
     if not is_supported():
-        return False, "Setting wallpaper is available on Windows only"
+        return False, _UNSUPPORTED_MESSAGE
     if screen is None:
         screen = get_screen_size()
     _lg.info(f"Setting wallpaper from {url} (screen={screen}).")
@@ -256,6 +268,293 @@ async def set_wallpaper_from_url(
     if path is None:
         return False, "Failed to save wallpaper file"
     if not apply_wallpaper(path):
+        backend = _select_backend()
+        if backend.name == "linux":
+            return False, _NO_TOOL_MESSAGE
         return False, "Failed to set wallpaper"
     _lg.info(f"Wallpaper set from {url} ({len(prepared)} bytes).")
     return True, "Wallpaper set"
+
+
+# Backends --------------------------------------------------------
+
+
+class _Backend:
+    """Base class for per-platform wallpaper installers."""
+
+    name = "unsupported"
+    supports = False
+
+    def screen_size(self) -> tuple[int, int] | None:
+        """Return the monitor size, or None when unknown."""
+        return None
+
+    def apply(self, path: Path) -> bool:
+        """Install the image at path as the desktop background."""
+        return False
+
+
+class _WindowsBackend(_Backend):
+    """Wallpaper installer via the Win32 desktop API."""
+
+    name = "windows"
+    supports = True
+
+    def screen_size(self) -> tuple[int, int] | None:
+        try:
+            user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+            width = user32.GetSystemMetrics(0)
+            height = user32.GetSystemMetrics(1)
+        except Exception as e:
+            _lg.error(f"Failed to read screen size: {e}.")
+            return None
+        if not width or not height:
+            return None
+        return (int(width), int(height))
+
+    def apply(self, path: Path) -> bool:
+        try:
+            result = ctypes.windll.user32.SystemParametersInfoW(  # type: ignore[attr-defined]
+                SPI_SETDESKWALLPAPER,
+                0,
+                str(path.resolve()),
+                SPIF_UPDATEINIFILE | SPIF_SENDCHANGE,
+            )
+        except Exception as e:
+            _lg.error(f"Failed to set wallpaper: {e}.")
+            return False
+        return bool(result)
+
+
+class _LinuxBackend(_Backend):
+    """Wallpaper installer for Linux desktop environments.
+
+    Tries desktop-specific tools in an environment-aware order and
+    stops at the first success. Every step is best-effort with a
+    logged command line and exit code; nothing raises.
+    """
+
+    name = "linux"
+    supports = True
+
+    def apply(self, path: Path) -> bool:
+        desktop = _detect_desktop()
+        _lg.info(
+            f"Setting Linux wallpaper (desktop={desktop or 'unknown'})."
+        )
+        for label, attempt in self._plan(path, desktop):
+            try:
+                if attempt():
+                    _lg.info(f"Wallpaper set via {label}.")
+                    return True
+            except Exception as e:
+                _lg.debug(f"Wallpaper attempt {label} raised: {e}.")
+        _lg.warning(_NO_TOOL_MESSAGE + ".")
+        return False
+
+    def _plan(self, path: Path, desktop: str):
+        """Order install attempts by detected desktop environment."""
+        gsettings = lambda: _apply_gsettings(path)  # noqa: E731
+        kde = lambda: _apply_kde(path)  # noqa: E731
+        xfce = lambda: _apply_xfce(path)  # noqa: E731
+        fallback = lambda: _apply_fallback(path)  # noqa: E731
+        if "kde" in desktop or "plasma" in desktop:
+            return [
+                ("plasma-apply/qdbus", kde),
+                ("gsettings", gsettings),
+                ("xfconf-query", xfce),
+                ("feh/nitrogen", fallback),
+            ]
+        if "xfce" in desktop:
+            return [
+                ("xfconf-query", xfce),
+                ("gsettings", gsettings),
+                ("feh/nitrogen", fallback),
+            ]
+        return [
+            ("gsettings", gsettings),
+            ("plasma-apply/qdbus", kde),
+            ("xfconf-query", xfce),
+            ("feh/nitrogen", fallback),
+        ]
+
+
+class _StubBackend(_Backend):
+    """Placeholder for platforms without wallpaper support yet.
+
+    Android lands here until the full Android client wires the
+    native ``WallpaperManager`` calls.
+    """
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.supports = False
+
+
+def _select_backend() -> _Backend:
+    """Return the wallpaper backend for the running platform."""
+    platform = sys.platform
+    if platform == "win32":
+        return _WindowsBackend()
+    if platform.startswith("linux"):
+        return _LinuxBackend()
+    if platform == "android":
+        return _StubBackend("android")
+    return _StubBackend(platform)
+
+
+def _detect_desktop() -> str:
+    """Return a lowercase desktop-environment hint, or ''."""
+    for var in ("XDG_CURRENT_DESKTOP", "DESKTOP_SESSION"):
+        value = os.environ.get(var, "")
+        if value:
+            return value.strip().lower()
+    return ""
+
+
+def _which(binary: str) -> str | None:
+    """Return the resolved path of a helper binary, or None."""
+    found = shutil.which(binary)
+    if found is None:
+        _lg.debug(f"Wallpaper helper missing: {binary}.")
+    return found
+
+
+def _run(
+    cmd: list[str], label: str
+) -> subprocess.CompletedProcess | None:
+    """Run a helper command without a shell, catching all errors.
+
+    Args:
+        cmd: Argument list (no shell expansion).
+        label: Short name for log lines.
+
+    Returns:
+        CompletedProcess, or None when the binary is missing or
+        the run itself failed.
+    """
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+    except FileNotFoundError:
+        _lg.debug(f"Wallpaper helper missing: {cmd[0]}.")
+        return None
+    except (OSError, subprocess.TimeoutExpired) as e:
+        _lg.debug(f"Wallpaper attempt {label} failed: {e}.")
+        return None
+    if proc.returncode != 0:
+        _lg.debug(
+            f"Wallpaper attempt {label} exited "
+            f"{proc.returncode}: {(proc.stderr or '').strip()}."
+        )
+        return None
+    return proc
+
+
+def _apply_gsettings(path: Path) -> bool:
+    """Set the wallpaper on GNOME/Cinnamon via gsettings."""
+    if _which("gsettings") is None:
+        return False
+    uri = path.resolve().as_uri()
+    ok = False
+    for key in ("picture-uri", "picture-uri-dark"):
+        proc = _run(
+            [
+                "gsettings",
+                "set",
+                "org.gnome.desktop.background",
+                key,
+                uri,
+            ],
+            f"gsettings:{key}",
+        )
+        ok = proc is not None or ok
+    return ok
+
+
+def _apply_kde(path: Path) -> bool:
+    """Set the wallpaper on KDE Plasma, if its tools exist."""
+    target = str(path.resolve())
+    applier = _which("plasma-apply-wallpaperimage")
+    if applier is not None:
+        return _run([applier, target], "plasma-apply") is not None
+    if _which("qdbus") is None:
+        return False
+    script = (
+        "for (const desktop of desktops()) {"
+        "desktop.wallpaperPlugin = "
+        "'org.kde.image';"
+        f"desktop.currentConfigGroup = ['Wallpaper', "
+        f"'org.kde.image', 'General'];"
+        f"desktop.writeConfig('Image', 'file://{target}');"
+        "}"
+    )
+    return (
+        _run(
+            [
+                "qdbus",
+                "org.kde.plasmashell",
+                "/PlasmaShell",
+                "org.kde.PlasmaShell.evaluateScript",
+                script,
+            ],
+            "qdbus",
+        )
+        is not None
+    )
+
+
+def _apply_xfce(path: Path) -> bool:
+    """Set the wallpaper on XFCE via xfconf-query."""
+    if _which("xfconf-query") is None:
+        return False
+    target = str(path.resolve())
+    listed = _run(
+        ["xfconf-query", "-c", "xfce4-desktop", "-l"], "xfconf-list"
+    )
+    if listed is None:
+        return False
+    props = [
+        line.strip()
+        for line in (listed.stdout or "").splitlines()
+        if line.strip().endswith("last-image")
+    ]
+    if not props:
+        return False
+    ok = False
+    for prop in props:
+        proc = _run(
+            [
+                "xfconf-query",
+                "-c",
+                "xfce4-desktop",
+                "-p",
+                prop,
+                "-s",
+                target,
+            ],
+            f"xfconf:{prop}",
+        )
+        ok = proc is not None or ok
+    return ok
+
+
+def _apply_fallback(path: Path) -> bool:
+    """Set the wallpaper via feh/nitrogen on minimal window managers."""
+    target = str(path.resolve())
+    if _which("feh") is not None:
+        if _run(["feh", "--bg-scale", target], "feh") is not None:
+            return True
+    if _which("nitrogen") is not None:
+        if (
+            _run(
+                ["nitrogen", "--set-scaled", target], "nitrogen"
+            )
+            is not None
+        ):
+            return True
+    return False

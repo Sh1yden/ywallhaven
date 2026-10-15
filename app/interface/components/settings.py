@@ -164,10 +164,32 @@ class SettingsPanel(Container):
             try:
                 from app.interface.themes import apply_theme
 
-                apply_theme(self.page, new_theme)
-            except Exception as e:
-                _lg.warning(f"Failed to apply theme {new_theme}: {e}")
+                applied = apply_theme(self.page, new_theme)
+                if applied.id != new_theme:
+                    raise ValueError(f"unknown theme {new_theme!r}")
+                chip = getattr(
+                    self.page, "_ywallhaven_theme_label", None
+                )
+                if chip is not None:
+                    chip.value = applied.name
+                    try:
+                        chip.update()
+                    except Exception:
+                        pass
                 self.page.update()
+            except Exception as e:
+                _lg.error(
+                    f"Failed to apply theme {new_theme}: {e}.",
+                    exc_info=True,
+                )
+                self.page.show_dialog(
+                    SnackBar(
+                        content=Text(f"Failed to apply theme: {e}"),
+                        behavior=SnackBarBehavior.FLOATING,
+                        bgcolor=Colors.RED,
+                    )
+                )
+                return
 
         if api_key_changed:
             _lg.debug("Publishing the new API key on the bus.")

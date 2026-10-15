@@ -38,6 +38,7 @@ def test_topics_are_namespaced():
         bus.TOPIC_DOWNLOAD,
         bus.TOPIC_SET_WALLPAPER,
         bus.TOPIC_TAG,
+        bus.TOPIC_COLOR,
         bus.TOPIC_API_KEY,
     ):
         assert topic.startswith("ywallhaven/")
@@ -49,9 +50,10 @@ def test_topics_are_namespaced():
             bus.TOPIC_DOWNLOAD,
             bus.TOPIC_SET_WALLPAPER,
             bus.TOPIC_TAG,
+            bus.TOPIC_COLOR,
             bus.TOPIC_API_KEY,
         }
-    ) == 7
+    ) == 8
 
 
 def test_publish_sends_on_topic():

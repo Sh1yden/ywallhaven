@@ -25,7 +25,7 @@ jobs:
         run: uv sync
 
       - name: Build executables
-        run: uv run python scripts/build.py
+        run: uv run python scripts/build.py --target win
 
       - name: Package portable zip and checksums
         run: uv run python scripts/package_release.py "${{ github.ref_name }}"
@@ -33,12 +33,75 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ywallhaven-binaries
+          name: ywallhaven-windows
           path: |
             dist/ywallhaven.exe
             dist/ywallhaven-updater.exe
             dist/ywallhaven_portable-${{ github.ref_name }}.zip
-            dist/SHA256SUMS.txt
+
+  build-linux:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install FUSE for appimagetool
+        run: sudo apt-get update && sudo apt-get install -y libfuse2
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Build Linux binaries
+        run: uv run python scripts/build.py --target linux
+
+      - name: Stage AppDir
+        run: uv run python scripts/make_appdir.py
+
+      - name: Download appimagetool
+        run: |
+          curl -L -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x appimagetool
+
+      - name: Build AppImage
+        env:
+          ARCH: x86_64
+          APPIMAGE_EXTRACT_AND_RUN: 1
+        run: ./appimagetool dist/AppDir "dist/YWallhaven-${{ github.ref_name }}-x86_64.AppImage"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ywallhaven-linux
+          path: dist/YWallhaven-${{ github.ref_name }}-x86_64.AppImage
+
+  release:
+    needs: [build, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ywallhaven-windows
+          path: dist
+
+      - name: Download Linux artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ywallhaven-linux
+          path: dist
+
+      - name: Combine checksums
+        run: |
+          cd dist
+          sha256sum ywallhaven.exe ywallhaven-updater.exe ywallhaven_portable-*.zip YWallhaven-*-x86_64.AppImage > SHA256SUMS.txt
+          cat SHA256SUMS.txt
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
@@ -46,19 +109,24 @@ jobs:
           files: |
             dist/ywallhaven.exe
             dist/ywallhaven-updater.exe
-            dist/ywallhaven_portable-${{ github.ref_name }}.zip
+            dist/ywallhaven_portable-*.zip
+            dist/YWallhaven-*-x86_64.AppImage
             dist/SHA256SUMS.txt
           prerelease: ${{ contains(github.ref_name, '-') }}
           name: ${{ github.ref_name }}
           body: |
-            Автосборка из тега `${{ github.ref_name }}`.
+            ## Files / Файлы
 
-            Файлы:
-            - `ywallhaven.exe` — основное приложение;
-            - `ywallhaven-updater.exe` — помощник автообновления;
-            - `ywallhaven_portable-${{ github.ref_name }}.zip` — портативная сборка (папка `ywallhaven` с обоими exe);
-            - `SHA256SUMS.txt` — контрольные суммы SHA-256.
+            - `ywallhaven.exe` — main app (Windows) / основное приложение (Windows);
+            - `ywallhaven-updater.exe` — auto-update helper (Windows) / помощник автообновления (Windows);
+            - `ywallhaven_portable-${{ github.ref_name }}.zip` — portable build, `ywallhaven` folder with both exe / портативная сборка;
+            - `YWallhaven-${{ github.ref_name }}-x86_64.AppImage` — main app (Linux), `chmod +x` once to run / основное приложение (Linux);
+            - `SHA256SUMS.txt` — SHA-256 checksums / контрольные суммы.
 
-            Проверка: `certutil -hashfile ywallhaven.exe SHA256` и сверка с `SHA256SUMS.txt`.
+            Verify (Windows): `certutil -hashfile ywallhaven.exe SHA256` and compare with `SHA256SUMS.txt`.
+            Проверка (Windows): сверка с `SHA256SUMS.txt`.
+
+            Verify (Linux): `sha256sum -c SHA256SUMS.txt`.
+            Проверка (Linux): `sha256sum -c SHA256SUMS.txt`.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

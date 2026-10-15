@@ -289,10 +289,9 @@ def test_apply_theme_sets_mode(monkeypatch) -> None:
     # mock page
     page = SimpleNamespace(theme=None, dark_theme=None, theme_mode=None)
 
-    # patch update to no-op
-    page.update = lambda: None
-    # need _Control__uid attr to avoid update attempt
-    page._Control__uid = None
+    updated: list = []
+    # mock page
+    page.update = lambda: updated.append(True)
 
     td = apply_theme(page, "kanagawa_wave")
     assert td.id == "kanagawa_wave"
@@ -306,6 +305,32 @@ def test_apply_theme_sets_mode(monkeypatch) -> None:
     # fallback for unknown
     td3 = apply_theme(page, "unknown_xyz")
     assert td3.id == "dark_default"
+    assert updated, "mounted page must receive update()"
+
+
+def test_apply_theme_defers_update_when_detached(caplog) -> None:
+    """apply_theme must not raise when page.update() fails."""
+    import logging
+
+    from types import SimpleNamespace
+
+    from app.interface.themes import apply_theme
+
+    def _boom():
+        raise RuntimeError("boom-update")
+
+    page = SimpleNamespace(
+        theme=None, dark_theme=None, theme_mode=None, update=_boom
+    )
+
+    caplog.set_level(logging.DEBUG, logger="ywallhaven")
+    td = apply_theme(page, "dark_default")
+
+    assert td.id == "dark_default"
+    assert any(
+        r.levelname == "DEBUG" and "Deferred theme update" in r.getMessage()
+        for r in caplog.records
+    )
 
 
 def test_build_theme_dd_list_failure_fallback(caplog, monkeypatch) -> None:
@@ -370,7 +395,7 @@ def test_apply_theme_dark_theme_failure_fallback(caplog) -> None:
 
     assert td.id == "dark_default"
     assert page.theme is not None
-    assert page.updated is False
+    assert page.updated is True
     assert any(
         r.levelname == "DEBUG" and "dark_theme" in r.getMessage()
         for r in caplog.records

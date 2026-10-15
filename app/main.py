@@ -29,7 +29,7 @@ from app.interface import flet_main
 _lg = get_logger()
 
 
-_UPDATE_FILE_PATTERN = "ywallhaven-*-update.exe"
+_UPDATE_FILE_PATTERN = "ywallhaven-*-update.*"
 _UPDATER_LOG_LIMIT = 1_000_000
 
 

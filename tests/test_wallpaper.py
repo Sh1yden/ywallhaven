@@ -1,4 +1,4 @@
-"""Tests for the Windows wallpaper service."""
+"""Tests for the cross-platform wallpaper service."""
 
 import ctypes
 import types
@@ -110,8 +110,14 @@ def test_is_supported_on_windows(monkeypatch):
 
 
 def test_is_supported_on_linux(monkeypatch):
-    """Linux platform reports wallpaper as unsupported."""
+    """Linux platform reports wallpaper as supported (own backend)."""
     monkeypatch.setattr(wallpaper.sys, "platform", "linux")
+    assert wallpaper.is_supported() is True
+
+
+def test_is_supported_on_android(monkeypatch):
+    """Android stub reports wallpaper as unsupported for now."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "android")
     assert wallpaper.is_supported() is False
 
 
@@ -234,6 +240,7 @@ def test_apply_unsupported_returns_false(monkeypatch, tmp_path):
 
 def test_apply_success_returns_true(monkeypatch, tmp_path):
     """SystemParametersInfoW returning 1 means success."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     seen = []
     _stub_spi(monkeypatch, result=1, seen=seen)
@@ -243,6 +250,7 @@ def test_apply_success_returns_true(monkeypatch, tmp_path):
 
 def test_apply_zero_returns_false(monkeypatch, tmp_path):
     """SystemParametersInfoW returning 0 means failure."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _stub_spi(monkeypatch, result=0)
     assert wallpaper.apply_wallpaper(tmp_path / "x.jpg") is False
@@ -250,6 +258,7 @@ def test_apply_zero_returns_false(monkeypatch, tmp_path):
 
 def test_apply_exception_returns_false(monkeypatch, tmp_path):
     """Win32 errors are caught and reported as False."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _stub_spi(monkeypatch, exc=OSError("boom"))
     assert wallpaper.apply_wallpaper(tmp_path / "x.jpg") is False
@@ -260,7 +269,7 @@ def test_apply_exception_returns_false(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_set_unsupported_platform(monkeypatch):
-    """Non-Windows returns Windows-only without fetching."""
+    """Unsupported platforms return without fetching."""
     monkeypatch.setattr(wallpaper, "is_supported", lambda: False)
     calls = []
 
@@ -272,7 +281,7 @@ async def test_set_unsupported_platform(monkeypatch):
         _fetch, "https://example.com/w.jpg"
     )
     assert ok is False
-    assert message == "Setting wallpaper is available on Windows only"
+    assert message == wallpaper._UNSUPPORTED_MESSAGE
     assert calls == []
 
 
@@ -373,6 +382,7 @@ async def test_set_write_failed(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_apply_failed(monkeypatch, tmp_path):
     """A rejected apply maps to the set message."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _use_direct_to_thread(monkeypatch)
     monkeypatch.setattr(
@@ -427,6 +437,7 @@ def test_screen_size_unsupported(monkeypatch):
 
 def test_screen_size_returns_metrics(monkeypatch):
     """Metrics 0/1 map to (1920, 1080)."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _stub_metrics(monkeypatch, 1920, 1080)
     assert wallpaper.get_screen_size() == (1920, 1080)
@@ -434,6 +445,7 @@ def test_screen_size_returns_metrics(monkeypatch):
 
 def test_screen_size_windll_error(monkeypatch):
     """Win32 errors map to None (no raise)."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
 
     def _boom(index):
@@ -447,6 +459,13 @@ def test_screen_size_windll_error(monkeypatch):
 
 def test_screen_size_zero_returns_none(monkeypatch):
     """Zero metrics mean unavailable (None)."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _stub_metrics(monkeypatch, 0, 0)
+    assert wallpaper.get_screen_size() is None
+
+
+def test_screen_size_linux_returns_none(monkeypatch):
+    """Linux has no monitor probe, screen stays unknown."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "linux")
     assert wallpaper.get_screen_size() is None

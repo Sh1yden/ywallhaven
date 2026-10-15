@@ -70,6 +70,99 @@ def set_wallpaper(image_path: str):
 - [x] Оптимизация подгрузки эллементов, их независимость(например подгруз в основной галлереи, мидл панели, 
 не должен влиять на работоспособность всего приложения, не должно оно подвисать, кнопки должны дальше функционировать).
 - [x] Добавить информирование пользователя о ошибках приложения и сервиса wallhaven.
+- [x] Пофиксить пустой поиск + apply сразу остаёмся без галлереи
+- [x] Добавить поиск по цвету от тыка по кружочку в правой панели под превью около тегов(кружочки уже есть, но нет функциональности)
+- [x] Пофиксить применение тем, не применяются после кнопки save(приходиться перезаходить в приложение)
+- [x] Кроссплатформенные обои: фасад с бэкендами Windows (без смены
+  поведения) / Linux (каскад gsettings, plasma-apply/qdbus,
+  xfconf-query, feh/nitrogen) / Android-заглушка; кнопка видна
+  на win+linux, UI ушёл от `sys.platform`.
+- [x] Linux-сборка: `*-linux.spec` (onedir), `build.py --target`,
+  `make_appdir.py` (AppDir), джоба `build-linux` (win не тронута).
+- [x] Автоапдейт Linux: ассет `YWallhaven-*-x86_64.AppImage`
+  по платформе, таргет замены из `$APPIMAGE`, проверка прав,
+  posix-рестарт, `chmod +x` (вшитый хелпер в AppDir).
+- [x] Двуязычное тело релиза (EN+RU): таблица файлов + проверка
+  `certutil`/`sha256sum`, строка про автосборку убрана.
+- [x] Восстановлен `run.py` (шим для спеков, win-сборка была
+  сломана на main).
+
+## [0.13.0] - 2026-10-15
+
+### Добавлено
+
+- Поиск по цвету из правой панели (`bus.py`, `right_panel.py`,
+  `left_panel.py`): кружки цветов кликабельны через новый топик
+  `ywallhaven/color` (`{"color": hex}`), левая панель выставляет
+  фильтр `colors` и делает `_apply()`; произвольные hex обоев,
+  которых нет в пресетах, добавляются динамической опцией
+  дропдауна; мусорный hex игнорируется без падения.
+- Фасад обоев с бэкендами (`wallpaper.py`): `WindowsBackend`
+  (прежний `SystemParametersInfoW`, без смены поведения),
+  `LinuxBackend` (рантайм-каскад по `XDG_CURRENT_DESKTOP`:
+  `plasma-apply/qdbus -> xfconf-query -> gsettings -> feh/nitrogen`,
+  всё через `subprocess` без `shell`, с таймаутом и логом кодов),
+  `AndroidBackend`-заглушка до полноценного Android-клиента;
+  размер экрана на Linux честно `None` (ветка без ресайза).
+- Linux-пайплайн (`ywallhaven-linux.spec` onedir,
+  `ywallhaven-updater-linux.spec` onefile, `scripts/build.py`
+  `--target win|linux`, `scripts/make_appdir.py` stdlib-only):
+  `dist/ywallhaven/` + хелпер рядом → `dist/AppDir/` (`AppRun`,
+  `*.desktop`, `icon.png`) → `YWallhaven-<tag>-x86_64.AppImage`
+  через `appimagetool`; win-путь не менялся.
+- Автоапдейт Linux, уровень full replace (`updater.py`,
+  `updater/main.py`): выбор ассета по платформе
+  (`YWallhaven-*.AppImage` по префиксу/суффиксу), суффикс
+  темп-файла `.AppImage`, таргет замены из `$APPIMAGE` (бинарь
+  в сквоше read-only), явная ошибка при незаписываемом пути
+  вместо молчаливого провала, posix-рестарт через
+  `start_new_session`, `chmod +x` до/после замены.
+- Двуязычное тело релиза (`build-release.yml`, джобы
+  `build` + `build-linux` + `release`): `EN` первым, `RU` вторым;
+  общий `SHA256SUMS.txt` по 5 файлам; проверка `certutil`
+  на Windows и `sha256sum -c` на Linux.
+- Тесты: пустой поиск (3: фолбэк, сохранение relevance,
+  публикация дефолта), цвет (6: топик, нормализация hex,
+  кликабельность, приём в левой панели, кастомная опция),
+  темы (3: `update()` на смонтированной, deferred без падения,
+  `Save` с чипом/ошибкой), обои Linux (9: диспетчер, каскады,
+  `_run`), апдейтер Linux (8: ассет, суффикс, старт хелпера,
+  `$APPIMAGE`, права, рестарт), AppDir (5), чистка AppImage
+  (1). Итог: `245 passed, 1 skipped` (штатный скип `test_version`
+  при сгенерированном `_version.py`).
+
+### Исправлено
+
+- Пустой поиск + Apply больше не оставляет пустую галерею
+  (`left_panel.py`): `relevance` без запроса фолбэчится
+  в `date_added` с синхронизацией дропдауна и чисткой висящего
+  `error` — дефолтная лента как при старте (диагноз по живому
+  API: `q="" + relevance` отдаёт `data:[]` при `total>0`, что
+  `middle_panel` читал как конец ленты с `has_more=False`).
+- Темы применяются сразу после Save без перезапуска
+  (`themes/__init__.py`, `settings.py`, `flet_app.py`): убран
+  гард по приватному `_Control__uid` (в `flet 0.86` его нет —
+  `page.update()` тихо скипался), чип темы в хедере запинен
+  и обновляется, провал применения даёт красный `SnackBar`
+  вместо ложного `Settings saved`.
+- Восстановлен `run.py` (шим `from app.main import main`,
+  случайно удалён в docs-коммите — win-сборка по спеку
+  была сломана на main).
+- Убран `creationflags` (win-only) из posix-ветки запуска
+  хелпера апдейтера — латентный краш на Linux.
+
+### Изменено
+
+- `wallpaper.is_supported()` теперь платформенный (`win32`
+  + Linux → `True`); правая панель и `flet_app` проверяют
+  бэкенд сервиса вместо `sys.platform == "win32"`.
+- CI: одна джоба → `build` (win) + `build-linux`
+  (`ubuntu-22.04`, `libfuse2`, `appimagetool`) + `release`
+  (общий `SHA256SUMS.txt`, двуязычный `body`).
+- Паттерн чистки темп-файлов апдейта `update.exe` → `update.*`
+  (покрывает `.AppImage`).
+- Контракт `UpdaterService.find_asset`: win — точное имя,
+  остальные — `YWallhaven-*.AppImage`.
 
 ## [0.12.0] - 2026-10-03
 
@@ -623,6 +716,7 @@ def set_wallpaper(image_path: str):
 - Черновой `README.md`.
 
 [Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.12.0...HEAD
+[0.13.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.9.2...v0.10.0

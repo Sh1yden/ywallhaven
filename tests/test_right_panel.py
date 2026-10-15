@@ -327,3 +327,40 @@ def test_bus_subscribe_unsubscribe_lifecycle(panel, monkeypatch):
 def test_api_key_message_updates_client(panel):
     panel._on_api_key_message("ywallhaven/api_key", {"api_key": "k"})
     assert panel._api_client.apik == "k"
+
+
+def test_normalize_color(panel):
+    assert panel._normalize_color("#FF9900") == "ff9900"
+    assert panel._normalize_color("660000") == "660000"
+    assert panel._normalize_color("") is None
+    assert panel._normalize_color(None) is None
+    assert panel._normalize_color("zzz") is None
+    assert panel._normalize_color("#fff") is None
+    assert panel._normalize_color("#ff99001") is None
+
+
+def test_open_color_publishes(panel, monkeypatch):
+    from app.interface import bus as bus_mod
+
+    stub = _BusPageStub()
+    _attach_bus_page(monkeypatch, panel, stub)
+
+    panel._open_color("#FF9900")
+    panel._open_color("not-a-color")
+    panel._open_color("")
+
+    assert stub.sent == [(bus_mod.TOPIC_COLOR, {"color": "ff9900"})]
+
+
+def test_colors_row_is_clickable(panel):
+    from flet import GestureDetector, Row
+
+    row = panel._make_colors_row(["#ff9900", "#000000"])
+    assert isinstance(row, Row)
+    assert len(row.controls) == 2
+    for control in row.controls:
+        assert isinstance(control, GestureDetector)
+        assert callable(control.on_tap)
+
+    assert panel._make_colors_row([]) is None
+    assert panel._make_colors_row(None) is None

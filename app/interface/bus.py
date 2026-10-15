@@ -26,6 +26,9 @@ TOPIC_SET_WALLPAPER = "ywallhaven/set_wallpaper"
 TOPIC_TAG = "ywallhaven/tag"
 """Right -> left: {"name": str}."""
 
+TOPIC_COLOR = "ywallhaven/color"
+"""Right -> left: {"color": str} (hex, 6 chars, no '#')."""
+
 TOPIC_API_KEY = "ywallhaven/api_key"
 """Settings -> left+right: {"api_key": str}."""
 
