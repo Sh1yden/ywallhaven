@@ -725,3 +725,126 @@ async def test_window_keeps_short_feeds_intact(panel, monkeypatch):
 
     assert len(panel._wallpapers) == 10
     assert [t.data for t in panel.controls] == list(range(10))
+
+class _FavBusStub:
+    """Page stand-in recording pubsub messages."""
+
+    def __init__(self) -> None:
+        self.sent: list = []
+        self.pubsub = self
+
+    def send_all_on_topic(self, topic, message):
+        self.sent.append((topic, message))
+
+    def subscribe_topic(self, topic, handler):
+        pass
+
+    def unsubscribe_topic(self, topic):
+        pass
+
+    def run_task(self, fn, *args, **kwargs):
+        return None
+
+
+def _gallery_wallpaper(wid="w1"):
+    return {
+        "id": wid,
+        "path": f"https://example.com/{wid}.jpg",
+        "thumbs": {"small": f"https://example.com/{wid}_s.jpg"},
+        "resolution": "1920x1080",
+    }
+
+
+def _panel_with_store(monkeypatch, tmp_path):
+    from app.service.favorites import FavoritesStore
+
+    store = FavoritesStore(tmp_path / "favorites.json")
+    panel = MiddlePanel(store)
+    stub = _FavBusStub()
+    _attach_page(monkeypatch, panel, stub)
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    return panel, store, stub
+
+
+def test_tile_buttons_publish_toggle_and_pick(monkeypatch, tmp_path):
+    from app.interface import bus as bus_mod
+
+    panel, _store, stub = _panel_with_store(monkeypatch, tmp_path)
+    tile = panel._build_title(_gallery_wallpaper(), 0)
+
+    pressed = []
+
+    def _walk(control):
+        from flet import IconButton
+
+        if isinstance(control, IconButton):
+            pressed.append(control)
+        for child in getattr(control, "controls", []) or []:
+            _walk(child)
+        content = getattr(control, "content", None)
+        if content is not None:
+            _walk(content)
+
+    _walk(tile)
+    assert len(pressed) == 2
+    pressed[0].on_click(None)
+    pressed[1].on_click(None)
+
+    topics = [t for t, _m in stub.sent]
+    assert topics == [
+        bus_mod.TOPIC_FAVORITE_TOGGLE,
+        bus_mod.TOPIC_COLLECTION_PICK,
+    ]
+    assert stub.sent[0][1]["wallpaper"]["id"] == "w1"
+
+
+def test_button_press_suppresses_preview(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+
+    panel, _store, stub = _panel_with_store(monkeypatch, tmp_path)
+    panel._wallpapers.append(_gallery_wallpaper())
+    panel._suppress_until = 9999999999.0
+
+    panel.handle_image_click(SimpleNamespace(control=SimpleNamespace(data=0)))
+
+    assert stub.sent == []
+
+
+def test_heart_reflects_store_and_refresh(monkeypatch, tmp_path):
+    from flet import Icons
+
+    from app.service.favorites import FAVORITES_ID
+
+    panel, store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    panel._wallpapers.append(_gallery_wallpaper())
+    tile = panel._build_title(_gallery_wallpaper(), 0)
+    panel.controls.append(tile)
+    heart = panel._fav_buttons[id(tile)]
+
+    assert heart.icon == Icons.FAVORITE_BORDER
+    store.add(FAVORITES_ID, _gallery_wallpaper())
+    panel._refresh_favorite_states()
+    assert heart.icon == Icons.FAVORITE
+
+
+def test_favorites_subscription_lifecycle(monkeypatch, tmp_path):
+    from app.interface import bus as bus_mod
+
+    panel, _store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    seen: dict = {}
+    monkeypatch.setattr(
+        bus_mod,
+        "subscribe",
+        lambda page, topic, handler: seen.setdefault(topic, handler),
+    )
+    unsubs: list = []
+    monkeypatch.setattr(
+        bus_mod, "unsubscribe", lambda page, topic: unsubs.append(topic)
+    )
+
+    panel._subscribe_bus()
+    assert bus_mod.TOPIC_FILTERS in seen
+    assert bus_mod.TOPIC_FAVORITES in seen
+    panel._unsubscribe_bus()
+    assert bus_mod.TOPIC_FILTERS in unsubs
+    assert bus_mod.TOPIC_FAVORITES in unsubs

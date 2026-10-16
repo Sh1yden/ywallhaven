@@ -29,6 +29,33 @@ TOPIC_TAG = "ywallhaven/tag"
 TOPIC_COLOR = "ywallhaven/color"
 """Right -> left: {"color": str} (hex, 6 chars, no '#')."""
 
+TOPIC_MODE = "ywallhaven/mode"
+"""Any -> all: {"mode": "gallery" | "collections"}."""
+
+TOPIC_FAVORITES = "ywallhaven/favorites"
+"""Any -> all: favorites changed, re-read the store."""
+
+TOPIC_COLLECTION_SELECT = "ywallhaven/collection_select"
+"""Collections grid -> app: {"kind": "collection"|"folder", "id": str}."""
+
+TOPIC_COLLECTION_DELETE = "ywallhaven/collection_delete"
+"""Collections props -> app: {"id": str} (confirm + delete)."""
+
+TOPIC_COLLECTION_CLEAR = "ywallhaven/collection_clear"
+"""Collections props -> app: {"id": str} (confirm + empty)."""
+
+TOPIC_COLLECTION_CREATE = "ywallhaven/collection_create"
+"""Create tile -> app: {} (open the creation dialog)."""
+
+TOPIC_FAVORITE_TOGGLE = "ywallhaven/favorite_toggle"
+"""Heart button -> app: {"wallpaper": dict} (toggle favorites)."""
+
+TOPIC_COLLECTION_PICK = "ywallhaven/collection_pick"
+"""Plus button -> app: {"wallpaper": dict} (open picker)."""
+
+TOPIC_COLLECTION_DOWNLOAD = "ywallhaven/collection_download"
+"""Props -> app: {"kind": ..., "id": ...} (download dialog)."""
+
 TOPIC_API_KEY = "ywallhaven/api_key"
 """Settings -> left+right: {"api_key": str}."""
 

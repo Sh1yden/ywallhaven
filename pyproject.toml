@@ -13,7 +13,6 @@ dependencies = [
     "httpx>=0.28.1",
     "packaging>=24.0",
     "pydantic-settings>=2.14.2",
-    "pyinstaller>=6.21.0",
     "pillow>=11.0.0",
 ]
 
@@ -21,6 +20,7 @@ dependencies = [
 dev = [
     "hatchling>=1.27.0",
     "hatch-vcs>=0.4.0",
+    "pyinstaller>=6.21.0",
     "pytest>=8.3.0",
     "pytest-asyncio>=0.25.0",
     "pytest-cov>=7.1.0",

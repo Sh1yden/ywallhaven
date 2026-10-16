@@ -41,17 +41,22 @@ MUST_DROP = (
     "libxcb.so.1",
     "libdbus-1.so.3",
     "libsystemd.so.0",
+    "libicudata.so.78",
+    "libicuuc.so.78",
 )
 
 
 def _prefixes() -> tuple:
-    """Extract GUI_LIB_PREFIXES from the spec file text."""
+    """Extract exclusion prefixes from the spec file text."""
     text = SPEC.read_text(encoding="utf-8")
-    match = re.search(
-        r"GUI_LIB_PREFIXES\s*=\s*\((.*?)\)", text, re.DOTALL
-    )
-    assert match, "GUI_LIB_PREFIXES not found in linux spec"
-    return tuple(re.findall(r'"([^"]+)"', match.group(1)))
+    found: list = []
+    for name in ("GUI_LIB_PREFIXES", "EXTRA_DROP_PREFIXES"):
+        match = re.search(
+            rf"{name}\s*=\s*\((.*?)\)", text, re.DOTALL
+        )
+        assert match, f"{name} not found in linux spec"
+        found.extend(re.findall(r'"([^"]+)"', match.group(1)))
+    return tuple(found)
 
 
 def _dropped(name: str, prefixes: tuple) -> bool:
@@ -72,3 +77,8 @@ def test_runtime_libs_are_kept():
     prefixes = _prefixes()
     for name in MUST_KEEP:
         assert not _dropped(name, prefixes), f"{name} would drop"
+
+
+def test_duplicate_client_tree_excluded_from_datas():
+    text = SPEC.read_text(encoding="utf-8")
+    assert 'startswith("flet_desktop/app")' in text

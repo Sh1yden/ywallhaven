@@ -25,7 +25,7 @@ a = Analysis(
 # gi/tkinter/webview anywhere in app/), so drop the whole desktop/GUI
 # closure: GTK stack, X11/XCB, dbus/systemd and their helpers.
 # Kept on purpose: image codecs (Pillow runtime), freetype/fontconfig,
-# ssl/crypto, compression, icu/sqlite, libstdc++.
+# ssl/crypto, compression, sqlite, libstdc++.
 GUI_LIB_PREFIXES = (
     "libgtk-3",
     "libgdk",
@@ -61,10 +61,27 @@ GUI_LIB_PREFIXES = (
     "libgcrypt",
     "libgpg-error",
 )
+# Dead weight proven unused by audit (T4): ICU data is referenced by
+# nothing in the bundle; uvloop arrives via flet[all]→uvicorn and is
+# never imported (our server is flet's own asyncio one).
+EXTRA_DROP_PREFIXES = (
+    "libicudata",
+    "libicuuc",
+    "uvloop",
+)
 a.binaries = [
     entry
     for entry in a.binaries
-    if not entry[0].startswith(GUI_LIB_PREFIXES)
+    if not entry[0].startswith(GUI_LIB_PREFIXES + EXTRA_DROP_PREFIXES)
+    and not entry[0].startswith("flet_desktop/app")
+]
+# Duplicate Flet client tree inside the bundle: first launch provisions
+# the client from ~/.flet cache (or download) anyway, since no client
+# archive ships in the bundle. Python files of flet_desktop stay.
+a.datas = [
+    entry
+    for entry in a.datas
+    if not entry[0].startswith("flet_desktop/app")
 ]
 pyz = PYZ(a.pure)
 

@@ -329,6 +329,105 @@ def test_api_key_message_updates_client(panel):
     assert panel._api_client.apik == "k"
 
 
+def test_show_collection_renders_props(panel, monkeypatch):
+    from app.interface import bus as bus_mod
+
+    stub = _BusPageStub()
+    _attach_bus_page(monkeypatch, panel, stub)
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    collection = {
+        "id": "c1",
+        "name": "Nature",
+        "builtin": False,
+        "cover": {"mode": "last"},
+        "settings": {"slideshow": True, "interval": 60},
+        "wallpapers": [
+            {
+                "id": "w1",
+                "path": "http://x/w.jpg",
+                "thumbs": {"small": "http://x/s.jpg"},
+            }
+        ],
+    }
+
+    panel.show_collection(collection)
+
+    assert panel.content is not None
+
+
+def test_show_empty_favorites_hint(panel, monkeypatch):
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    collection = {
+        "id": "favorites",
+        "name": "Fav",
+        "builtin": True,
+        "cover": {"mode": "heart"},
+        "settings": {},
+        "wallpapers": [],
+    }
+
+    panel.show_collection(collection)
+
+    texts = []
+
+    def _collect(control):
+        from flet import Text as _Text
+
+        if isinstance(control, _Text) and control.value:
+            texts.append(control.value)
+        for child in getattr(control, "controls", []) or []:
+            _collect(child)
+        content = getattr(control, "content", None)
+        if content is not None:
+            _collect(content)
+
+    _collect(panel.content)
+    assert any("избранное" in t for t in texts)
+
+
+def test_show_collection_delete_only_custom(panel, monkeypatch):
+    from app.interface import bus as bus_mod
+
+    stub = _BusPageStub()
+    _attach_bus_page(monkeypatch, panel, stub)
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    builtin = {
+        "id": "favorites",
+        "name": "Fav",
+        "builtin": True,
+        "cover": {"mode": "heart"},
+        "settings": {},
+        "wallpapers": [],
+    }
+    custom = dict(builtin, id="c1", builtin=False)
+
+    panel.show_collection(builtin)
+    assert stub.sent == []
+    # builtin has Clear only: click both action buttons if present
+    panel.show_collection(custom)
+
+    clicked = []
+
+    def _click(control):
+        handler = getattr(control, "on_click", None)
+        if callable(handler):
+            clicked.append(control.content)
+            handler(SimpleNamespace())
+
+    def _walk(control):
+        _click(control)
+        for child in getattr(control, "controls", []) or []:
+            _walk(child)
+        content = getattr(control, "content", None)
+        if content is not None:
+            _walk(content)
+
+    _walk(panel.content)
+    topics = [t for t, _m in stub.sent]
+    assert bus_mod.TOPIC_COLLECTION_CLEAR in topics
+    assert bus_mod.TOPIC_COLLECTION_DELETE in topics
+
+
 def test_normalize_color(panel):
     assert panel._normalize_color("#FF9900") == "ff9900"
     assert panel._normalize_color("660000") == "660000"
@@ -364,3 +463,46 @@ def test_colors_row_is_clickable(panel):
 
     assert panel._make_colors_row([]) is None
     assert panel._make_colors_row(None) is None
+
+
+def test_show_collection_download_all_publishes(panel, monkeypatch):
+    from app.interface import bus as bus_mod
+
+    stub = _BusPageStub()
+    _attach_bus_page(monkeypatch, panel, stub)
+    monkeypatch.setattr(panel, "update", lambda *a, **k: None)
+    collection = {
+        "id": "c9",
+        "name": "N",
+        "builtin": False,
+        "cover": {"mode": "heart"},
+        "settings": {},
+        "wallpapers": [],
+    }
+
+    panel.show_collection(collection)
+
+    downloads = []
+
+    def _walk(control):
+        from flet import FilledTonalButton
+
+        if isinstance(control, FilledTonalButton):
+            downloads.append(control)
+        for child in getattr(control, "controls", []) or []:
+            _walk(child)
+        content = getattr(control, "content", None)
+        if content is not None:
+            _walk(content)
+
+    _walk(panel.content)
+    assert downloads
+    downloads[0].on_click(SimpleNamespace())
+
+    assert (bus_mod.TOPIC_COLLECTION_DOWNLOAD, {"kind": "collection", "id": "c9"}) in stub.sent
+
+
+def test_is_fullscreen_open(panel):
+    assert panel.is_fullscreen_open() is False
+    panel._fullscreen_layer.visible = True
+    assert panel.is_fullscreen_open() is True

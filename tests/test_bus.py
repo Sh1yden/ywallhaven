@@ -39,6 +39,15 @@ def test_topics_are_namespaced():
         bus.TOPIC_SET_WALLPAPER,
         bus.TOPIC_TAG,
         bus.TOPIC_COLOR,
+        bus.TOPIC_MODE,
+        bus.TOPIC_FAVORITES,
+        bus.TOPIC_COLLECTION_SELECT,
+        bus.TOPIC_COLLECTION_DELETE,
+        bus.TOPIC_COLLECTION_CLEAR,
+        bus.TOPIC_COLLECTION_CREATE,
+        bus.TOPIC_FAVORITE_TOGGLE,
+        bus.TOPIC_COLLECTION_PICK,
+        bus.TOPIC_COLLECTION_DOWNLOAD,
         bus.TOPIC_API_KEY,
     ):
         assert topic.startswith("ywallhaven/")
@@ -51,9 +60,18 @@ def test_topics_are_namespaced():
             bus.TOPIC_SET_WALLPAPER,
             bus.TOPIC_TAG,
             bus.TOPIC_COLOR,
+            bus.TOPIC_MODE,
+            bus.TOPIC_FAVORITES,
+            bus.TOPIC_COLLECTION_SELECT,
+            bus.TOPIC_COLLECTION_DELETE,
+            bus.TOPIC_COLLECTION_CLEAR,
+            bus.TOPIC_COLLECTION_CREATE,
+            bus.TOPIC_FAVORITE_TOGGLE,
+            bus.TOPIC_COLLECTION_PICK,
+            bus.TOPIC_COLLECTION_DOWNLOAD,
             bus.TOPIC_API_KEY,
         }
-    ) == 8
+    ) == 17
 
 
 def test_publish_sends_on_topic():

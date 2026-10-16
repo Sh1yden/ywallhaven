@@ -217,6 +217,10 @@ pyrightconfig.json
 # My config
 config.json
 
+# Local favorites (user data next to the app)
+favorites.json
+favorites.json.tmp
+
 # User themes (keep examples inactive, ignore personal)
 themes/user_*.json
 themes/custom_*.json

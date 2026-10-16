@@ -318,6 +318,7 @@ async def test_set_fetch_raises_fails(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_animated_refused(monkeypatch):
     """Animated input maps to the animated message."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _use_direct_to_thread(monkeypatch)
     monkeypatch.setattr(
@@ -340,6 +341,7 @@ async def test_set_animated_refused(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_prepare_failed(monkeypatch):
     """Non-animated prepare failure maps to prepare message."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _use_direct_to_thread(monkeypatch)
     monkeypatch.setattr(
@@ -362,6 +364,7 @@ async def test_set_prepare_failed(monkeypatch):
 @pytest.mark.asyncio
 async def test_set_write_failed(monkeypatch):
     """A None temp path maps to the save message."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _use_direct_to_thread(monkeypatch)
     monkeypatch.setattr(
@@ -406,6 +409,7 @@ async def test_set_apply_failed(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_set_happy_path(monkeypatch, tmp_path):
     """Full pipeline writes the temp file and applies it."""
+    monkeypatch.setattr(wallpaper.sys, "platform", "win32")
     monkeypatch.setattr(wallpaper, "is_supported", lambda: True)
     _use_direct_to_thread(monkeypatch)
     target = _patch_temp(monkeypatch, tmp_path)

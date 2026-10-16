@@ -6,9 +6,10 @@ import sys
 import time
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable, Dict, List
 
 from flet import (
+    AlertDialog,
     Border,
     Card,
     ClipBehavior,
@@ -16,8 +17,11 @@ from flet import (
     Column,
     Container,
     Divider,
+    Dropdown,
+    DropdownOption,
     FilePicker,
     FilePickerFileType,
+    FilledButton,
     Icon,
     IconButton,
     Icons,
@@ -28,6 +32,8 @@ from flet import (
     SnackBar,
     SnackBarBehavior,
     Text,
+    TextButton,
+    TextField,
     VerticalDivider,
 )
 from PIL import Image as PILImage
@@ -37,6 +43,8 @@ from app.core.error_handling import install_loop_exception_handler
 from app.core.resources import close_all
 from app.interface import bus
 from app.interface.components import (
+    CollectionSettingsPanel,
+    CollectionsPanel,
     LeftPanel,
     MiddlePanel,
     RightPanel,
@@ -44,6 +52,14 @@ from app.interface.components import (
 )
 from app.interface.components.update_dialog import check_and_offer
 from app.interface.themes import apply_theme, get_theme, list_themes
+from app.service.collection_io import (
+    build_zip,
+    display_name,
+    resolve_bytes,
+    unique_name,
+)
+from app.service.favorites import FAVORITES_ID, FavoritesStore
+from app.service.slideshow import SlideshowService
 from app.service.wallpaper import (
     is_supported as is_wallpaper_supported,
     set_wallpaper_from_url,
@@ -300,6 +316,7 @@ async def _build_ui(page: Page) -> None:
         """
         _lg.debug("Session disconnected; closing resources...")
         bus.unsubscribe_all(page)
+        page.run_task(slideshow.stop)
         page.run_task(close_all)
 
     page.on_disconnect = on_disconnect
@@ -416,11 +433,552 @@ async def _build_ui(page: Page) -> None:
         """
         return middle_panel.select_relative(delta, index)
 
+    store = FavoritesStore()
     right_panel = RightPanel(on_navigate=on_navigate)
-    middle_panel = MiddlePanel()
+    middle_panel = MiddlePanel(store)
     left_panel = LeftPanel()
 
     settings_panel = SettingsPanel(theme_picker=theme_picker)
+
+    collections_state = {
+        "mode": "gallery",
+        "kind": "collection",
+        "id": FAVORITES_ID,
+    }
+    collections_panel = CollectionsPanel(store)
+
+    def _resolve_selection() -> tuple:
+        """Return (kind, collection, folder) for the selection.
+
+        Missing targets fall back to the builtin favorites, which
+        always exists, so the properties panel never goes empty.
+        """
+        kind = collections_state["kind"]
+        sid = collections_state["id"]
+        if kind == "folder":
+            folder = next(
+                (
+                    f
+                    for f in store.folders()
+                    if f.get("id") == sid
+                ),
+                None,
+            )
+            if folder is not None:
+                return ("folder", None, folder)
+        collection = store.get(sid) or store.get(FAVORITES_ID)
+        collections_state["kind"] = "collection"
+        collections_state["id"] = collection["id"]
+        return ("collection", collection, None)
+
+    def _show_selection() -> None:
+        """Render right properties + left settings for selection."""
+        kind, collection, folder = _resolve_selection()
+        if kind == "folder":
+            count = len(store.scan_folder(folder.get("path", "")))
+            right_panel.show_collection(
+                None, folder=folder, folder_count=count
+            )
+            collection_settings.load_folder(folder, count)
+        else:
+            right_panel.show_collection(collection)
+            collection_settings.load_collection(collection)
+
+    def _refresh_collections() -> None:
+        """Rebuild the grid and re-render the current selection."""
+        collections_panel.refresh()
+        if collections_state["mode"] == "collections":
+            _show_selection()
+        page.run_task(_sync_slideshow)
+
+    collection_settings = CollectionSettingsPanel(
+        store, on_changed=_refresh_collections
+    )
+
+    def _paint_mode_button() -> None:
+        """Highlight the heart button in collections mode."""
+        active = collections_state["mode"] == "collections"
+        mode_button.bgcolor = (
+            Colors.PRIMARY_CONTAINER
+            if active
+            else Colors.SURFACE_CONTAINER_HIGHEST
+        )
+        try:
+            mode_button.update()
+        except Exception as e:
+            _lg.debug(f"Mode button update deferred: {e}")
+
+    def _set_mode(mode: str) -> None:
+        """Swap middle/left content between gallery and collections."""
+        collections_state["mode"] = mode
+        if mode == "collections":
+            middle_wrapped.content = collections_panel
+            left_wrapped.content = collection_settings
+            _refresh_collections()
+        else:
+            middle_wrapped.content = middle_panel
+            left_wrapped.content = left_panel
+            page.run_task(_sync_slideshow)
+        _paint_mode_button()
+        try:
+            middle_wrapped.update()
+            left_wrapped.update()
+        except Exception as e:
+            _lg.debug(f"Mode swap update deferred: {e}")
+
+    def _toggle_mode(e) -> None:
+        """Flip gallery ⇄ collections from the heart button."""
+        _set_mode(
+            "gallery"
+            if collections_state["mode"] == "collections"
+            else "collections"
+        )
+
+    def _on_bus_collection_select(topic: str, message: Any) -> None:
+        """Show the collection/folder picked in the grid."""
+        payload = message or {}
+        kind = payload.get("kind", "collection")
+        sid = payload.get("id", "")
+        if not sid:
+            return
+        collections_state["kind"] = kind
+        collections_state["id"] = sid
+        _show_selection()
+
+    def _open_create_dialog(
+        wallpaper: Dict[str, Any] | None = None,
+    ) -> None:
+        """Show the new-collection dialog with cover and settings.
+
+        Args:
+            wallpaper: Optional wallpaper to add right after creation
+                (coming from the add-to-collection picker).
+        """
+        name_field = TextField(
+            label="Collection name",
+            hint_text="My wallpapers",
+            filled=True,
+        )
+        cover_dd = Dropdown(
+            label="Cover",
+            value="last",
+            options=[
+                DropdownOption(key=m, text=m)
+                for m in ("last", "heart", "icon")
+            ],
+        )
+        icon_dd = Dropdown(
+            label="Icon",
+            value="IMAGE",
+            options=[
+                DropdownOption(key=name, text=name)
+                for name in (
+                    "FAVORITE",
+                    "IMAGE",
+                    "LANDSCAPE",
+                    "FOLDER",
+                    "STAR",
+                )
+            ],
+        )
+        interval_field = TextField(
+            label="Slideshow interval, seconds",
+            value="300",
+            filled=True,
+        )
+
+        def _close(e=None) -> None:
+            page.pop_dialog()
+
+        def _create(e) -> None:
+            name = (name_field.value or "").strip()
+            if not name:
+                name_field.error = "Name is required"
+                name_field.update()
+                return
+            try:
+                interval = int((interval_field.value or "").strip())
+            except (ValueError, TypeError):
+                interval_field.error = "Invalid number"
+                interval_field.update()
+                return
+            if interval < 10:
+                interval_field.error = "Minimum 10 seconds"
+                interval_field.update()
+                return
+            cover: Dict[str, Any] = {"mode": cover_dd.value or "last"}
+            if cover["mode"] == "icon":
+                cover["icon"] = icon_dd.value or "IMAGE"
+            created = store.create(
+                name, cover=cover, settings={"interval": interval}
+            )
+            if created is None:
+                name_field.error = "Could not create"
+                name_field.update()
+                return
+            page.pop_dialog()
+            if wallpaper is not None:
+                store.add(created["id"], wallpaper)
+            collections_state["kind"] = "collection"
+            collections_state["id"] = created["id"]
+            _refresh_collections()
+
+        page.show_dialog(
+            AlertDialog(
+                modal=True,
+                title=Text("New collection"),
+                content=Column(
+                    tight=True,
+                    spacing=8,
+                    controls=[
+                        name_field,
+                        cover_dd,
+                        icon_dd,
+                        interval_field,
+                    ],
+                ),
+                actions=[
+                    TextButton("Cancel", on_click=_close),
+                    FilledButton(
+                        content="Create",
+                        icon=Icons.ADD,
+                        on_click=_create,
+                    ),
+                ],
+            )
+        )
+
+    def _confirm_collection_action(
+        action: str, sid: str, title: str, question: str
+    ) -> None:
+        """Confirm destructive collection actions (delete/clear)."""
+
+        def _close(e=None) -> None:
+            page.pop_dialog()
+
+        def _apply(e) -> None:
+            page.pop_dialog()
+            if action == "delete":
+                store.delete(sid)
+            else:
+                store.clear(sid)
+            _refresh_collections()
+
+        page.show_dialog(
+            AlertDialog(
+                modal=True,
+                title=Text(title),
+                content=Text(question),
+                actions=[
+                    TextButton("Cancel", on_click=_close),
+                    FilledButton(content="Confirm", on_click=_apply),
+                ],
+            )
+        )
+
+    def _on_bus_collection_create(topic: str, message: Any) -> None:
+        """Open the creation dialog from the create tile."""
+        _open_create_dialog()
+
+    def _on_bus_collection_delete(topic: str, message: Any) -> None:
+        """Confirm and delete a user collection."""
+        sid = (message or {}).get("id", "")
+        target = store.get(sid)
+        if target is None or target.get("builtin", False):
+            return
+        _confirm_collection_action(
+            "delete",
+            sid,
+            "Delete collection?",
+            f"'{target.get('name', '')}' will be removed. "
+            "Downloaded files are not affected.",
+        )
+
+    def _on_bus_collection_clear(topic: str, message: Any) -> None:
+        """Confirm and empty a collection."""
+        sid = (message or {}).get("id", "")
+        target = store.get(sid)
+        if target is None:
+            return
+        _confirm_collection_action(
+            "clear",
+            sid,
+            "Clear collection?",
+            f"All wallpapers will be removed from "
+            f"'{target.get('name', '')}'.",
+        )
+
+    async def _apply_slideshow_wallpaper(
+        wallpaper: Dict[str, Any],
+    ) -> bool:
+        """Apply one slideshow wallpaper via the shared installer."""
+        url = str(wallpaper.get("path", ""))
+        if not url:
+            return False
+        if url.startswith("http"):
+            fetch = middle_panel.api_client.fetch_bytes
+        else:
+
+            async def fetch(_url: str) -> bytes | None:
+                def _read() -> bytes | None:
+                    try:
+                        return Path(_url).read_bytes()
+                    except OSError:
+                        return None
+
+                return await asyncio.to_thread(_read)
+
+        ok, _message = await set_wallpaper_from_url(fetch, url)
+        return ok
+
+    slideshow = SlideshowService(
+        _apply_slideshow_wallpaper,
+        paused=right_panel.is_fullscreen_open,
+    )
+
+    async def _sync_slideshow() -> None:
+        """Align the engine with the selected collection settings."""
+        if collections_state["mode"] != "collections":
+            await slideshow.stop()
+            return
+        kind, collection, folder = _resolve_selection()
+        if kind == "folder":
+            settings = folder.get("settings") or {}
+            walls = store.scan_folder(folder.get("path", ""))
+            label = folder.get("name", "?")
+        else:
+            settings = collection.get("settings") or {}
+            walls = collection.get("wallpapers") or []
+            label = collection.get("name", "?")
+        if settings.get("slideshow") and walls:
+            await slideshow.start(
+                walls,
+                label=label,
+                interval=settings.get("interval", 300),
+                order=settings.get("order", "sequential"),
+            )
+        else:
+            await slideshow.stop()
+
+    def _resolve_download_items(
+        kind: str, sid: str
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Return (name, wallpapers) for a collection or folder."""
+        if kind == "folder":
+            folder = next(
+                (f for f in store.folders() if f.get("id") == sid),
+                None,
+            )
+            if folder is None:
+                return "", []
+            return (
+                folder.get("name", "folder"),
+                store.scan_folder(folder.get("path", "")),
+            )
+        collection = store.get(sid)
+        if collection is None:
+            return "", []
+        return (
+            collection.get("name", "collection"),
+            list(collection.get("wallpapers") or []),
+        )
+
+    def _open_collection_download(kind: str, sid: str) -> None:
+        """Show the download-all dialog with ZIP/folder choice."""
+        from flet import ProgressBar
+
+        name, walls = _resolve_download_items(kind, sid)
+        if not walls:
+            _show_snack(page, "Nothing to download", is_error=True)
+            return
+        status = Text(f"0/{len(walls)} files")
+        bar = ProgressBar(value=0)
+
+        def _close(e=None) -> None:
+            page.pop_dialog()
+
+        def _progress(done: int, total: int) -> None:
+            status.value = f"{done}/{total} files"
+            bar.value = done / total if total else 0
+            try:
+                status.update()
+                bar.update()
+            except Exception as e:
+                _lg.debug(f"Download progress deferred: {e}")
+
+        async def _download_zip(e=None) -> None:
+            data, failed = await build_zip(
+                walls,
+                middle_panel.api_client.fetch_bytes,
+                progress=_progress,
+            )
+            if data is None:
+                _show_snack(page, "Download failed", is_error=True)
+                page.pop_dialog()
+                return
+            saved = await file_picker.save_file(
+                dialog_title="Save collection",
+                file_name=f"{name}.zip",
+                file_type=FilePickerFileType.CUSTOM,
+                allowed_extensions=["zip"],
+                src_bytes=data,
+            )
+            page.pop_dialog()
+            if saved:
+                _show_snack(page, "Collection downloaded")
+            else:
+                _show_snack(page, "Save cancelled")
+
+        async def _download_folder(e=None) -> None:
+            directory = await file_picker.get_directory_path(
+                dialog_title="Choose folder",
+            )
+            if not directory:
+                return
+            taken: set = set()
+            failed = 0
+            total = len(walls)
+            for position, wallpaper in enumerate(walls):
+                data = await resolve_bytes(
+                    wallpaper, middle_panel.api_client.fetch_bytes
+                )
+                _progress(position + 1, total)
+                if not data:
+                    failed += 1
+                    continue
+                target = (
+                    Path(directory)
+                    / unique_name(
+                        taken, display_name(wallpaper, position)
+                    )
+                )
+
+                def _write() -> bool:
+                    try:
+                        target.write_bytes(data)
+                    except OSError:
+                        return False
+                    return True
+
+                if not await asyncio.to_thread(_write):
+                    failed += 1
+            page.pop_dialog()
+            if failed:
+                _show_snack(
+                    page,
+                    f"Downloaded {total - failed}/{total}",
+                    is_error=True,
+                )
+            else:
+                _show_snack(page, "Collection downloaded")
+
+        def _run_zip(e) -> None:
+            page.run_task(_download_zip)
+
+        def _run_folder(e) -> None:
+            page.run_task(_download_folder)
+
+        page.show_dialog(
+            AlertDialog(
+                modal=True,
+                title=Text(f"Download '{name}'"),
+                content=Column(
+                    tight=True,
+                    spacing=8,
+                    controls=[status, bar],
+                ),
+                actions=[
+                    TextButton("Cancel", on_click=_close),
+                    FilledButton(
+                        content="ZIP file", on_click=_run_zip
+                    ),
+                    FilledButton(
+                        content="Folder", on_click=_run_folder
+                    ),
+                ],
+            )
+        )
+
+    def _on_bus_collection_download(topic: str, message: Any) -> None:
+        """Open the download dialog for a collection/folder."""
+        payload = message or {}
+        _open_collection_download(
+            payload.get("kind", "collection"), payload.get("id", "")
+        )
+
+    def _on_bus_favorite_toggle(topic: str, message: Any) -> None:
+        """Toggle a wallpaper in the builtin favorites."""
+        wallpaper = (message or {}).get("wallpaper")
+        if not isinstance(wallpaper, dict):
+            return
+        wid = str(wallpaper.get("id", ""))
+        if not wid:
+            return
+        if store.contains(FAVORITES_ID, wid):
+            store.remove(FAVORITES_ID, wid)
+            _show_snack(page, "Removed from favorites")
+        else:
+            store.add(FAVORITES_ID, wallpaper)
+            _show_snack(page, "Added to favorites")
+        bus.publish(page, bus.TOPIC_FAVORITES, {})
+
+    def _on_bus_collection_pick(topic: str, message: Any) -> None:
+        """Open the add-to-collection picker for a wallpaper."""
+        wallpaper = (message or {}).get("wallpaper")
+        if isinstance(wallpaper, dict) and wallpaper.get("id"):
+            _open_pick_dialog(wallpaper)
+
+    def _open_pick_dialog(wallpaper: Dict[str, Any]) -> None:
+        """Show the collection picker with a create entry."""
+
+        def _close(e=None) -> None:
+            page.pop_dialog()
+
+        def _choose(collection_id: str) -> Callable:
+            def _add(e) -> None:
+                page.pop_dialog()
+                if store.add(collection_id, wallpaper):
+                    _show_snack(page, "Added to collection")
+                else:
+                    _show_snack(page, "Already in collection")
+                bus.publish(page, bus.TOPIC_FAVORITES, {})
+
+            return _add
+
+        rows: List[Any] = []
+        for collection in store.collections():
+            count = len(collection.get("wallpapers") or [])
+            marker = "♥ " if collection["id"] == FAVORITES_ID else ""
+            rows.append(
+                TextButton(
+                    content=f"{marker}{collection.get('name', '?')} "
+                    f"({count})",
+                    on_click=_choose(collection["id"]),
+                )
+            )
+        rows.append(
+            TextButton(
+                content="+ New collection",
+                on_click=lambda e: (
+                    page.pop_dialog(),
+                    _open_create_dialog(wallpaper),
+                ),
+            )
+        )
+        page.show_dialog(
+            AlertDialog(
+                modal=True,
+                title=Text("Add to collection"),
+                content=Column(
+                    tight=True,
+                    spacing=4,
+                    controls=rows,
+                ),
+                actions=[
+                    TextButton("Cancel", on_click=_close),
+                ],
+            )
+        )
 
     def _on_bus_download(topic: str, message: Any) -> None:
         """Start the save flow for a download published on the bus.
@@ -449,6 +1007,27 @@ async def _build_ui(page: Page) -> None:
 
     bus.subscribe(page, bus.TOPIC_DOWNLOAD, _on_bus_download)
     bus.subscribe(page, bus.TOPIC_SET_WALLPAPER, _on_bus_wallpaper)
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_SELECT, _on_bus_collection_select
+    )
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_CREATE, _on_bus_collection_create
+    )
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_DELETE, _on_bus_collection_delete
+    )
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_CLEAR, _on_bus_collection_clear
+    )
+    bus.subscribe(
+        page, bus.TOPIC_FAVORITE_TOGGLE, _on_bus_favorite_toggle
+    )
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_PICK, _on_bus_collection_pick
+    )
+    bus.subscribe(
+        page, bus.TOPIC_COLLECTION_DOWNLOAD, _on_bus_collection_download
+    )
 
     icon_bytes = _app_icon_bytes()
     logo = (
@@ -466,6 +1045,15 @@ async def _build_ui(page: Page) -> None:
     )
     # Pinned for live updates after Save in settings (theme chip).
     page._ywallhaven_theme_label = theme_chip
+
+    mode_button = IconButton(
+        icon=Icons.FAVORITE,
+        icon_size=22,
+        tooltip="Collections",
+        style=None,
+        bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+        on_click=_toggle_mode,
+    )
 
     # C3: polished header as surface container card + divider
     header = Container(
@@ -489,6 +1077,7 @@ async def _build_ui(page: Page) -> None:
                     content=theme_chip,
                 ),
                 Container(expand=True, content=Text("")),
+                mode_button,
                 IconButton(
                     icon=Icons.SETTINGS,
                     icon_size=22,

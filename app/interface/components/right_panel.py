@@ -17,6 +17,7 @@ from flet import (
     FilledButton,
     FilledTonalButton,
     GestureDetector,
+    Icon,
     IconButton,
     Icons,
     Image,
@@ -1207,6 +1208,189 @@ class RightPanel(Container):
             ],
         )
         self.update()
+
+    def show_collection(
+        self,
+        collection: Dict[str, Any] | None,
+        folder: Dict[str, Any] | None = None,
+        folder_count: int = 0,
+    ) -> None:
+        """Show the properties of a collection or a folder.
+
+        Replaces the wallpaper preview content; returning to the
+        gallery preview goes through :meth:`update_preview` again.
+
+        Args:
+            collection: Collection dict from the favorites store.
+            folder: Linked folder entry (when a folder is selected).
+            folder_count: Scanned photo count of the folder.
+        """
+        from app.interface.components.collections_panel import (
+            resolve_cover,
+        )
+
+        if collection is None and folder is None:
+            return
+        if folder is not None:
+            header: Any = Text(
+                folder.get("name", "?"),
+                size=16,
+                weight="w700",
+                color=Colors.ON_SURFACE,
+            )
+            props = [
+                self._make_row("Path", folder.get("path", "")),
+                self._make_row("Photos", folder_count),
+            ]
+            actions = self._download_action("folder", folder.get("id", ""))
+        else:
+            assert collection is not None
+            walls = collection.get("wallpapers") or []
+            settings = collection.get("settings") or {}
+            kind, value = resolve_cover(collection)
+            header = self._collection_cover(kind, value)
+            count = len(walls)
+            noun = "wallpaper" if count == 1 else "wallpapers"
+            props = [
+                self._make_row(
+                    "Name", collection.get("name", "?")
+                ),
+                self._make_row("Wallpapers", f"{count} {noun}"),
+                self._make_row(
+                    "Slideshow",
+                    "on" if settings.get("slideshow") else "off",
+                ),
+                self._make_row(
+                    "Interval", f"{settings.get('interval', 300)}s"
+                ),
+                self._make_row(
+                    "Order", settings.get("order", "sequential")
+                ),
+            ]
+            actions = self._collection_actions(collection, count)
+            actions = [
+                *self._download_action(
+                    "collection", collection.get("id", "")
+                ),
+                *actions,
+            ]
+            if count == 0:
+                props = [
+                    Text(
+                        "Добавьте обои в избранное <3",
+                        size=12,
+                        color=Colors.ON_SURFACE_VARIANT,
+                        text_align="center",
+                    ),
+                    *props,
+                ]
+        self.content = Column(
+            expand=True,
+            spacing=self.GAP,
+            controls=[
+                header,
+                ListView(
+                    expand=True,
+                    spacing=6,
+                    controls=[c for c in props if c is not None],
+                ),
+                *actions,
+            ],
+        )
+        try:
+            self.update()
+        except Exception as e:
+            _lg.debug(f"Collection view update deferred: {e}")
+
+    def _collection_cover(self, kind: str, value: Any) -> Container:
+        """Build the cover preview of a collection."""
+        if kind == "image" and value:
+            content: Any = Image(
+                src=value,
+                fit=BoxFit.COVER,
+                expand=True,
+                border_radius=16,
+                error_content=Icon(
+                    Icons.BROKEN_IMAGE,
+                    color=Colors.OUTLINE_VARIANT,
+                    size=24,
+                ),
+            )
+        else:
+            icon_name = "FAVORITE" if kind == "heart" else value
+            content = Container(
+                expand=True,
+                alignment=Alignment.CENTER,
+                content=Icon(
+                    getattr(Icons, str(icon_name), Icons.IMAGE),
+                    size=48,
+                    color=Colors.PRIMARY,
+                ),
+            )
+        return Container(
+            expand=True,
+            border_radius=16,
+            clip_behavior=ClipBehavior.HARD_EDGE,
+            bgcolor=Colors.SURFACE_CONTAINER_HIGHEST,
+            content=content,
+        )
+
+    def _download_action(self, kind: str, item_id: str) -> List[Any]:
+        """Build the download-all button for a collection/folder."""
+        return [
+            FilledTonalButton(
+                content="Download all",
+                icon=Icons.DOWNLOAD,
+                on_click=lambda e: bus.publish(
+                    getattr(self, "page", None),
+                    bus.TOPIC_COLLECTION_DOWNLOAD,
+                    {"kind": kind, "id": item_id},
+                ),
+            ),
+        ]
+
+    def is_fullscreen_open(self) -> bool:
+        """Return True while the fullscreen overlay is visible."""
+        layer = self._fullscreen_layer
+        return bool(layer is not None and layer.visible)
+
+    def _collection_actions(
+        self, collection: Dict[str, Any], count: int
+    ) -> List[Any]:
+        """Build delete/clear buttons for a collection."""
+        _ = count
+        buttons: List[Any] = [
+            FilledTonalButton(
+                content="Clear",
+                icon=Icons.DELETE_SWEEP,
+                on_click=lambda e: bus.publish(
+                    getattr(self, "page", None),
+                    bus.TOPIC_COLLECTION_CLEAR,
+                    {"id": collection.get("id", "")},
+                ),
+            ),
+        ]
+        if not collection.get("builtin", False):
+            buttons.append(
+                FilledTonalButton(
+                    content="Delete",
+                    icon=Icons.DELETE,
+                    on_click=lambda e: bus.publish(
+                        getattr(self, "page", None),
+                        bus.TOPIC_COLLECTION_DELETE,
+                        {"id": collection.get("id", "")},
+                    ),
+                )
+            )
+        return [
+            Container(
+                padding=Padding(top=8, right=0, bottom=0, left=0),
+                content=Row(
+                    spacing=8,
+                    controls=buttons,
+                ),
+            )
+        ]
 
     def _make_links_row(self, wallpaper: Dict[str, Any]) -> Row | None:
         """Build compact buttons for a wallpaper links.

@@ -11,11 +11,14 @@ Backends:
 
 - Windows: ``SystemParametersInfoW`` + physical monitor size via
   ``GetSystemMetrics`` (unchanged legacy behavior).
+- Noctalia shell: ``noctalia msg wallpaper-set`` IPC (owns resize,
+  transitions and palette, so it gets the untouched original file).
 - Linux: desktop-environment cascade (GNOME ``gsettings``,
   KDE ``plasma-apply-wallpaperimage``/``qdbus``, XFCE
   ``xfconf-query``, fallback ``feh``/``nitrogen``). Screen size is
   reported as unknown (``None``), so images keep the
   passthrough/convert path instead of a wrong resize.
+  ``gsettings`` is skipped on Wayland without GNOME (false success).
 - Android and anything else: stub, always unavailable. The native
   Android wiring (``WallpaperManager``) is intentionally left for
   the future full Android client.
@@ -258,20 +261,27 @@ async def set_wallpaper_from_url(
         return False, "Failed to download wallpaper"
     if not data:
         return False, "Failed to download wallpaper"
-    prepared = await asyncio.to_thread(pick_or_resize, data, screen)
-    if prepared is None:
+    backend = _select_backend()
+    if backend.wants_original:
+        # Shells rendering the wallpaper themselves (own resize,
+        # transitions, palette extraction) get the untouched file:
+        # re-encoding would only lose quality or the format.
         if _looks_animated(data):
             _lg.warning(f"Refused animated wallpaper {url}.")
             return False, "Animated images can't be set as wallpaper"
-        return False, "Failed to prepare wallpaper"
+        prepared = data
+    else:
+        prepared = await asyncio.to_thread(pick_or_resize, data, screen)
+        if prepared is None:
+            if _looks_animated(data):
+                _lg.warning(f"Refused animated wallpaper {url}.")
+                return False, "Animated images can't be set as wallpaper"
+            return False, "Failed to prepare wallpaper"
     path = write_temp(prepared)
     if path is None:
         return False, "Failed to save wallpaper file"
     if not apply_wallpaper(path):
-        backend = _select_backend()
-        if backend.name == "linux":
-            return False, _NO_TOOL_MESSAGE
-        return False, "Failed to set wallpaper"
+        return False, backend.fail_message
     _lg.info(f"Wallpaper set from {url} ({len(prepared)} bytes).")
     return True, "Wallpaper set"
 
@@ -284,6 +294,11 @@ class _Backend:
 
     name = "unsupported"
     supports = False
+    # Shells rendering the wallpaper themselves (own resize and
+    # transitions) want the untouched original file.
+    wants_original = False
+    # Message for set_wallpaper_from_url when apply() fails.
+    fail_message = "Failed to set wallpaper"
 
     def screen_size(self) -> tuple[int, int] | None:
         """Return the monitor size, or None when unknown."""
@@ -336,6 +351,7 @@ class _LinuxBackend(_Backend):
 
     name = "linux"
     supports = True
+    fail_message = _NO_TOOL_MESSAGE
 
     def apply(self, path: Path) -> bool:
         desktop = _detect_desktop()
@@ -353,30 +369,66 @@ class _LinuxBackend(_Backend):
         return False
 
     def _plan(self, path: Path, desktop: str):
-        """Order install attempts by detected desktop environment."""
+        """Order install attempts by detected desktop environment.
+
+        ``gsettings`` without a GNOME-like session is skipped: it
+        would "succeed" writing dconf with zero visible effect,
+        which is worse than an honest failure.
+        """
         gsettings = lambda: _apply_gsettings(path)  # noqa: E731
         kde = lambda: _apply_kde(path)  # noqa: E731
         xfce = lambda: _apply_xfce(path)  # noqa: E731
         fallback = lambda: _apply_fallback(path)  # noqa: E731
+        gnome_like = any(
+            key in desktop for key in ("gnome", "cinnamon", "unity", "budgie")
+        )
         if "kde" in desktop or "plasma" in desktop:
-            return [
+            ordered = [
                 ("plasma-apply/qdbus", kde),
-                ("gsettings", gsettings),
                 ("xfconf-query", xfce),
                 ("feh/nitrogen", fallback),
             ]
-        if "xfce" in desktop:
-            return [
+        elif "xfce" in desktop:
+            ordered = [
                 ("xfconf-query", xfce),
-                ("gsettings", gsettings),
                 ("feh/nitrogen", fallback),
             ]
-        return [
-            ("gsettings", gsettings),
-            ("plasma-apply/qdbus", kde),
-            ("xfconf-query", xfce),
-            ("feh/nitrogen", fallback),
-        ]
+        else:
+            ordered = [
+                ("plasma-apply/qdbus", kde),
+                ("xfconf-query", xfce),
+                ("feh/nitrogen", fallback),
+            ]
+        if gnome_like:
+            ordered.insert(0, ("gsettings", gsettings))
+        elif not _is_wayland():
+            # X11 last resort only: without a GNOME session it is
+            # still able to paint on plain X desktops.
+            ordered.append(("gsettings", gsettings))
+        return ordered
+
+
+class _NoctaliaBackend(_Backend):
+    """Wallpaper installer via the Noctalia shell IPC.
+
+    Noctalia renders wallpapers itself (own resize, transitions and
+    palette extraction), so it receives the untouched original file
+    (``wants_original``). Verified live against
+    ``noctalia msg wallpaper-set <path>`` (no connector = all
+    outputs; ``ALL`` is not a valid connector).
+    """
+
+    name = "noctalia"
+    supports = True
+    wants_original = True
+    fail_message = "Failed to set wallpaper: Noctalia rejected it"
+
+    def apply(self, path: Path) -> bool:
+        proc = _run(
+            ["noctalia", "msg", "wallpaper-set", str(path.resolve())],
+            "noctalia",
+        )
+        return proc is not None
 
 
 class _StubBackend(_Backend):
@@ -397,10 +449,58 @@ def _select_backend() -> _Backend:
     if platform == "win32":
         return _WindowsBackend()
     if platform.startswith("linux"):
+        if _is_noctalia_session():
+            return _NoctaliaBackend()
         return _LinuxBackend()
     if platform == "android":
         return _StubBackend("android")
     return _StubBackend(platform)
+
+
+def _is_wayland() -> bool:
+    """Return True inside a Wayland session."""
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return True
+    return os.environ.get("XDG_SESSION_TYPE", "").strip().lower() == "wayland"
+
+
+def _process_running(name: str) -> bool:
+    """Check via /proc whether a process with the given name runs.
+
+    Args:
+        name: Process name to look for (comm or argv[0] basename).
+
+    Returns:
+        True when at least one matching process exists.
+    """
+    try:
+        proc_dir = Path("/proc")
+        if not proc_dir.is_dir():
+            return False
+        for pid in proc_dir.iterdir():
+            if not pid.name.isdigit():
+                continue
+            try:
+                comm = (pid / "comm").read_text().strip()
+            except OSError:
+                continue
+            if comm == name:
+                return True
+    except OSError as e:
+        _lg.debug(f"Process scan failed: {e}.")
+        return False
+    return False
+
+
+def _is_noctalia_session() -> bool:
+    """Return True when the Noctalia shell can take wallpapers.
+
+    Requires the ``noctalia`` IPC client plus a running shell, so a
+    stray binary without the session never hijacks the cascade.
+    """
+    if _which("noctalia") is None:
+        return False
+    return _process_running("noctalia")
 
 
 def _detect_desktop() -> str:

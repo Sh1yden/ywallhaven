@@ -16,10 +16,12 @@ from flet import (
     Colors,
     ClipBehavior,
     Icon,
+    IconButton,
     Icons,
     Image,
     BoxFit,
     OnScrollEvent,
+    Row,
     Stack,
     Text,
     Alignment,
@@ -28,6 +30,7 @@ from app.core import LoggerMixin
 from app.core.resources import register
 from app.interface import bus
 from app.service import WallhavenAPI
+from app.service.favorites import FAVORITES_ID
 
 
 class MiddlePanel(GridView, LoggerMixin):
@@ -44,10 +47,11 @@ class MiddlePanel(GridView, LoggerMixin):
     OUTAGE_POLL_DELAY = 60.0
     TILE_WINDOW = 120
 
-    def __init__(self) -> None:
+    def __init__(self, store: Any = None) -> None:
         super().__init__()
         self.api_client = WallhavenAPI()
         register(self.api_client.close)
+        self._fav_store = store
         self.expand = 3
         self.runs_count = 4
         self.spacing = 12
@@ -58,6 +62,8 @@ class MiddlePanel(GridView, LoggerMixin):
         self.state_page = 1
         self.has_more = True
         self._wallpapers: List[Dict[str, Any]] = []
+        self._fav_buttons: Dict[int, Any] = {}
+        self._suppress_until = 0.0
         self._filters: Dict[str, Any] = {}
         self._generation = 0
         self._transient_failures = 0
@@ -87,18 +93,22 @@ class MiddlePanel(GridView, LoggerMixin):
         self.page.run_task(self.api_client.close)
 
     def _subscribe_bus(self) -> None:
-        """Listen for filter changes coming from the left panel."""
+        """Listen for filter changes and favorites updates."""
+        page = getattr(self, "page", None)
+        bus.subscribe(page, bus.TOPIC_FILTERS, self._on_filters_message)
         bus.subscribe(
-            getattr(self, "page", None),
-            bus.TOPIC_FILTERS,
-            self._on_filters_message,
+            page, bus.TOPIC_FAVORITES, self._on_favorites_message
         )
 
     def _unsubscribe_bus(self) -> None:
-        """Stop listening for filter changes."""
-        bus.unsubscribe(
-            getattr(self, "page", None), bus.TOPIC_FILTERS
-        )
+        """Stop listening for filter/favorites changes."""
+        page = getattr(self, "page", None)
+        bus.unsubscribe(page, bus.TOPIC_FILTERS)
+        bus.unsubscribe(page, bus.TOPIC_FAVORITES)
+
+    def _on_favorites_message(self, topic: str, message: Any) -> None:
+        """Refresh heart states after a favorites change."""
+        self._refresh_favorite_states()
 
     def _on_filters_message(self, topic: str, message: Any) -> None:
         """Reload the gallery with filters received over the bus.
@@ -133,6 +143,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self._poll_scheduled = False
         self._outage_tile = None
         self._wallpapers.clear()
+        self._fav_buttons.clear()
         self.controls.clear()
         self._load_wanted = False
         self._in_trigger_zone = False
@@ -201,7 +212,8 @@ class MiddlePanel(GridView, LoggerMixin):
                 # select_relative clamp them back into range.
                 while len(self._wallpapers) > self.TILE_WINDOW:
                     self._wallpapers.pop(0)
-                    self.controls.pop(0)
+                    gone = self.controls.pop(0)
+                    self._fav_buttons.pop(id(gone), None)
                 for pos, tile in enumerate(self.controls):
                     if isinstance(tile, GestureDetector):
                         tile.data = pos
@@ -513,7 +525,21 @@ class MiddlePanel(GridView, LoggerMixin):
             border_radius=12,
             error_content=Icon(Icons.BROKEN_IMAGE, color=Colors.OUTLINE_VARIANT, size=24),
         )
-        return GestureDetector(
+        heart = IconButton(
+            icon=self._heart_icon(wallpaper),
+            icon_size=16,
+            icon_color=Colors.WHITE,
+            bgcolor=Colors.BLACK54,
+            on_click=self._make_heart_handler(wallpaper),
+        )
+        plus = IconButton(
+            icon=Icons.ADD,
+            icon_size=16,
+            icon_color=Colors.WHITE,
+            bgcolor=Colors.BLACK54,
+            on_click=self._make_plus_handler(wallpaper),
+        )
+        tile = GestureDetector(
             data=index,
             on_tap=self.handle_image_click,
             on_double_tap=self.handle_image_double_click,
@@ -525,6 +551,14 @@ class MiddlePanel(GridView, LoggerMixin):
                 content=Stack(
                     controls=[
                         img,
+                        Container(
+                            alignment=Alignment.TOP_RIGHT,
+                            padding=4,
+                            content=Row(
+                                spacing=4,
+                                controls=[heart, plus],
+                            ),
+                        ),
                         Container(
                             alignment=Alignment.BOTTOM_RIGHT,
                             padding=4,
@@ -547,6 +581,75 @@ class MiddlePanel(GridView, LoggerMixin):
                 ),
             ),
         )
+        self._fav_buttons[id(tile)] = heart
+        return tile
+
+    def _heart_icon(self, wallpaper: Dict[str, Any]) -> Any:
+        """Return the filled heart when favorited, else the outline."""
+        if self._fav_store is None:
+            return Icons.FAVORITE_BORDER
+        try:
+            wid = str(wallpaper.get("id", ""))
+            if wid and self._fav_store.contains(FAVORITES_ID, wid):
+                return Icons.FAVORITE
+        except Exception as e:
+            self._lg.debug(f"Favorite state check failed: {e}")
+        return Icons.FAVORITE_BORDER
+
+    def _suppress_preview(self) -> None:
+        """Ignore tile taps briefly (button taps bubble to the tile)."""
+        self._suppress_until = time.monotonic() + 0.3
+
+    def _make_heart_handler(self, wallpaper: Dict[str, Any]) -> Any:
+        """Return the one-click favorite toggle handler."""
+
+        def handler(e) -> None:
+            self._suppress_preview()
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_FAVORITE_TOGGLE,
+                {"wallpaper": wallpaper},
+            )
+
+        return handler
+
+    def _make_plus_handler(self, wallpaper: Dict[str, Any]) -> Any:
+        """Return the collection picker handler."""
+
+        def handler(e) -> None:
+            self._suppress_preview()
+            bus.publish(
+                getattr(self, "page", None),
+                bus.TOPIC_COLLECTION_PICK,
+                {"wallpaper": wallpaper},
+            )
+
+        return handler
+
+    def _refresh_favorite_states(self) -> None:
+        """Sync heart icons with the favorites store."""
+        if self._fav_store is None:
+            return
+        updated = False
+        for tile in self.controls:
+            if not isinstance(tile, GestureDetector):
+                continue
+            button = self._fav_buttons.get(id(tile))
+            if button is None:
+                continue
+            try:
+                wallpaper = self._wallpapers[tile.data]
+            except (IndexError, TypeError):
+                continue
+            icon = self._heart_icon(wallpaper)
+            if button.icon != icon:
+                button.icon = icon
+                updated = True
+        if updated:
+            try:
+                self.update()
+            except Exception as e:
+                self._lg.debug(f"Favorite states update deferred: {e}")
 
     def handle_scroll(self, e: OnScrollEvent) -> None:
         """Load the next page when scrolled near the bottom.
@@ -572,9 +675,15 @@ class MiddlePanel(GridView, LoggerMixin):
     def handle_image_click(self, e) -> None:
         """Show the clicked wallpaper preview in the right panel.
 
+        Taps arriving right after a tile button press (heart/plus
+        bubble up to the tile) are ignored via the suppress window.
+
         Args:
             e: Tap event; the control data holds the cache index.
         """
+        if time.monotonic() < self._suppress_until:
+            self._lg.debug("Tile tap suppressed after button press.")
+            return
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Wallpaper index is - {index}.")
