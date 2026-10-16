@@ -829,3 +829,92 @@ def test_helper_main_replaces_and_restarts_posix(
     assert dst.read_bytes() == b"new"
     assert dst.stat().st_mode & 0o111
     assert started
+
+def test_helper_logger_falls_back_to_temp(tmp_path):
+    import logging
+
+    import updater.main as helper_main
+
+    denied = tmp_path / "readonly"
+    denied.mkdir()
+    denied.chmod(0o555)
+    logger = logging.getLogger("ywallhaven-updater")
+    logger.handlers.clear()
+    args = type(
+        "Args",
+        (),
+        {
+            "log": denied / "updater.log",
+            "dst": tmp_path / "app.AppImage",
+        },
+    )()
+
+    try:
+        resolved = helper_main._setup_logger(args)
+        assert resolved is logger
+        files = [
+            getattr(h, "baseFilename", "")
+            for h in logger.handlers
+            if isinstance(h, logging.FileHandler)
+        ]
+        assert len(files) == 1
+        assert str(tmp_path) not in files[0]
+    finally:
+        for handler in list(logger.handlers):
+            logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
+        denied.chmod(0o755)
+
+
+def test_helper_main_survives_unwritable_log_dir(tmp_path):
+    import updater.main as helper_main
+
+    denied = tmp_path / "readonly"
+    denied.mkdir()
+    src = tmp_path / "new.AppImage"
+    dst = tmp_path / "app.AppImage"
+    src.write_bytes(b"new")
+    dst.write_bytes(b"old")
+    denied.chmod(0o555)
+
+    old_argv = sys.argv
+    sys.argv = [
+        "updater",
+        "--pid", str(2**31 - 1),
+        "--src", str(src),
+        "--dst", str(dst),
+        "--log", str(denied / "updater.log"),
+    ]
+    try:
+        exit_code = helper_main.main()
+    finally:
+        sys.argv = old_argv
+        denied.chmod(0o755)
+
+    assert exit_code == 0
+    assert dst.read_bytes() == b"new"
+
+
+def test_log_path_prefers_app_dir(monkeypatch, tmp_path):
+    from app.service.updater import UpdaterService
+
+    assert UpdaterService._log_path(tmp_path) == (
+        tmp_path / "ywallhaven_updater.log"
+    )
+
+
+def test_log_path_falls_back_to_temp(monkeypatch, tmp_path):
+    import tempfile
+    from unittest import mock
+
+    from app.service.updater import UpdaterService
+
+    with mock.patch.object(
+        updater_module.os, "access", return_value=False
+    ):
+        assert UpdaterService._log_path(tmp_path) == (
+            Path(tempfile.gettempdir()) / "ywallhaven_updater.log"
+        )

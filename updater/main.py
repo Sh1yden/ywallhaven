@@ -38,7 +38,11 @@ def _parse_args() -> argparse.Namespace:
 
 
 def _setup_logger(args: argparse.Namespace) -> logging.Logger:
-    """Create a file logger next to the target executable.
+    """Create a file logger for the requested path with fallback.
+
+    The requested path may sit on a read-only mount (the AppImage
+    squashfs): fall back to the temp directory, and to stderr as a
+    last resort, instead of crashing before the update itself.
 
     Args:
         args: Parsed command line arguments.
@@ -46,9 +50,25 @@ def _setup_logger(args: argparse.Namespace) -> logging.Logger:
     Returns:
         Configured logger.
     """
-    log_path = args.log or args.dst.parent / "ywallhaven_updater.log"
+    from tempfile import gettempdir
+
+    requested = args.log or args.dst.parent / "ywallhaven_updater.log"
+    fallback = Path(gettempdir()) / "ywallhaven_updater.log"
     logger = logging.getLogger("ywallhaven-updater")
-    handler = logging.FileHandler(log_path, encoding="utf-8")
+    for candidate in (requested, fallback):
+        try:
+            handler: logging.Handler = logging.FileHandler(
+                candidate, encoding="utf-8"
+            )
+            if candidate != requested:
+                logger.warning(
+                    f"Log fallback: {candidate} (requested {requested})."
+                )
+            break
+        except OSError:
+            continue
+    else:
+        handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     )

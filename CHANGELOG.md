@@ -107,6 +107,24 @@ def set_wallpaper(image_path: str):
   и диалог создания, скачивание целиком (ZIP/папка + прогресс),
   слайдшоу-движок (пауза в фулскрине, пропуск ошибок),
   папки как read-only коллекции (unlink не трогает файлы).
+- [x] Апдейтер Linux доведен: хелпер больше не падает на логе
+  в read-only маунте (фолбэк в temp), сервис кладет лог рядом
+  с приложением только если туда можно писать.
+
+## [0.14.1] - 2026-10-16
+
+### Исправлено
+
+- Автоапдейт на Linux умирал до замены (`updater/main.py`,
+  `updater.py`): хелпер получал `--log` внутрь read-only
+  FUSE-маунта и падал с `PermissionError` в `FileHandler`
+  (доказано прогоном на read-only папке) — приложение при
+  этом закрывалось, версия не менялась, лога не оставалось.
+  Логгер хелпера теперь с фолбэком `requested → temp →
+  stderr`, сервис кладет лог рядом с приложением только
+  если туда можно писать (`_log_path`).
+- Тесты: фолбэк логгера, end-to-end хелпера с незаписываемым
+  логом, выбор пути лога. Итог: `310 passed, 1 skipped`.
 
 ## [0.14.0] - 2026-10-16
 
@@ -832,7 +850,8 @@ def set_wallpaper(image_path: str):
 - `.gitignore`.
 - Черновой `README.md`.
 
-[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.14.0...HEAD
+[Released]: https://github.com/Sh1yden/ywallhaven/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.14.0...v0.14.1
 [0.14.0]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/Sh1yden/ywallhaven/compare/v0.13.0...v0.13.1

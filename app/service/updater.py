@@ -159,7 +159,10 @@ class UpdaterService(LoggerMixin):
 
             asset = self.find_asset(release)
             if asset is None:
-                self._lg.debug(f"No {self.ASSET_NAME} asset in {release.tag_name}.")
+                self._lg.debug(
+                    f"No update asset for this platform "
+                    f"in {release.tag_name}."
+                )
                 continue
 
             try:
@@ -422,7 +425,7 @@ class UpdaterService(LoggerMixin):
             self.last_launch_error = reason
             return False
 
-        log_path = exe_path.parent / "ywallhaven_updater.log"
+        log_path = self._log_path(exe_path.parent)
         # Diagnostic: ensure the file exists before handing it over.
         try:
             exists = downloaded.is_file()
@@ -493,6 +496,26 @@ class UpdaterService(LoggerMixin):
             _upd_lg.error(f"Failed to start the updater helper: {e}.")
             self.last_launch_error = f"failed to start updater helper: {e}"
             return False
+
+    @staticmethod
+    def _log_path(exe_dir: Path) -> Path:
+        """Return the helper log path, preferring next to the app.
+
+        The AppImage squashfs mount is read-only, so fall back to
+        the temp directory when the app dir is not writable.
+
+        Args:
+            exe_dir: Directory of the running executable.
+
+        Returns:
+            Log file path for the helper ``--log``.
+        """
+        try:
+            if os.access(exe_dir, os.W_OK):
+                return exe_dir / "ywallhaven_updater.log"
+        except OSError as e:
+            _upd_lg.debug(f"Log dir check failed: {e}.")
+        return Path(gettempdir()) / "ywallhaven_updater.log"
 
     @staticmethod
     def _update_target(exe_path: Path) -> Path:
