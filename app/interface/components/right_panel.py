@@ -103,7 +103,12 @@ class RightPanel(Container):
         self.page.overlay.append(self._fullscreen_layer)
 
     def will_unmount(self) -> None:
-        """Remove the fullscreen layer from the page overlay."""
+        """Remove the fullscreen layer from the page overlay.
+
+        The HTTP client is intentionally NOT closed here (same
+        reason as MiddlePanel: unmount/remount cycles must keep it
+        usable; shutdown closing goes through close_all).
+        """
         self._unsubscribe_bus()
         super().will_unmount()
         if (
@@ -111,7 +116,6 @@ class RightPanel(Container):
             and self._fullscreen_layer in self.page.overlay
         ):
             self.page.overlay.remove(self._fullscreen_layer)
-        self.page.run_task(self._api_client.close)
 
     def _subscribe_bus(self) -> None:
         """Listen for preview/download/api-key bus topics."""
@@ -1277,7 +1281,7 @@ class RightPanel(Container):
             if count == 0:
                 props = [
                     Text(
-                        "Добавьте обои в избранное <3",
+                        "Add wallpapers to favorites <3",
                         size=12,
                         color=Colors.ON_SURFACE_VARIANT,
                         text_align="center",

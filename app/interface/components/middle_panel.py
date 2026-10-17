@@ -16,7 +16,6 @@ from flet import (
     Colors,
     ClipBehavior,
     Icon,
-    IconButton,
     Icons,
     Image,
     BoxFit,
@@ -63,7 +62,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self.has_more = True
         self._wallpapers: List[Dict[str, Any]] = []
         self._fav_buttons: Dict[int, Any] = {}
-        self._suppress_until = 0.0
+        self._plus_buttons: Dict[int, Any] = {}
         self._filters: Dict[str, Any] = {}
         self._generation = 0
         self._transient_failures = 0
@@ -88,9 +87,13 @@ class MiddlePanel(GridView, LoggerMixin):
         self.page.run_task(self.load_more)
 
     def will_unmount(self):
+        # NOTE: the HTTP client is intentionally NOT closed here. Mode
+        # swaps (gallery <-> collections) unmount/remount this panel,
+        # and a closed client would stay dead after remount since
+        # nothing reopens it. Shutdown closing goes through the
+        # resources registry (close_all on disconnect).
         self._unsubscribe_bus()
         super().will_unmount()
-        self.page.run_task(self.api_client.close)
 
     def _subscribe_bus(self) -> None:
         """Listen for filter changes and favorites updates."""
@@ -144,6 +147,7 @@ class MiddlePanel(GridView, LoggerMixin):
         self._outage_tile = None
         self._wallpapers.clear()
         self._fav_buttons.clear()
+        self._plus_buttons.clear()
         self.controls.clear()
         self._load_wanted = False
         self._in_trigger_zone = False
@@ -214,9 +218,9 @@ class MiddlePanel(GridView, LoggerMixin):
                     self._wallpapers.pop(0)
                     gone = self.controls.pop(0)
                     self._fav_buttons.pop(id(gone), None)
+                    self._plus_buttons.pop(id(gone), None)
                 for pos, tile in enumerate(self.controls):
-                    if isinstance(tile, GestureDetector):
-                        tile.data = pos
+                    self._reindex_tile(tile, pos)
                 self.state_page += 1
                 self.update()
                 self._lg.debug(
@@ -502,9 +506,14 @@ class MiddlePanel(GridView, LoggerMixin):
 
         return target, self._wallpapers[target]
 
+    # Top-left button zone (DIP): heart | plus. Sized after the
+    # actual chip (~56x32) with a small finger margin.
+    BUTTON_ZONE_WIDTH = 64.0
+    BUTTON_ZONE_HEIGHT = 40.0
+
     def _build_title(
         self, wallpaper: Dict[str, Any], index: int
-    ) -> GestureDetector:
+    ) -> Container:
         """Build a thumbnail tile for a wallpaper.
 
         C3: Card-like tile with rounded corners, shadow and info overlay.
@@ -514,7 +523,8 @@ class MiddlePanel(GridView, LoggerMixin):
             index: Index of the wallpaper in the local cache.
 
         Returns:
-            Gesture detector with single and double click handlers.
+            Card container; taps are handled by the nested preview
+            detector and the overlay buttons (see note below).
         """
         # resolution label for overlay (if available)
         res = wallpaper.get("resolution") or wallpaper.get("dimension") or ""
@@ -525,23 +535,27 @@ class MiddlePanel(GridView, LoggerMixin):
             border_radius=12,
             error_content=Icon(Icons.BROKEN_IMAGE, color=Colors.OUTLINE_VARIANT, size=24),
         )
-        heart = IconButton(
-            icon=self._heart_icon(wallpaper),
-            icon_size=16,
-            icon_color=Colors.WHITE,
-            bgcolor=Colors.BLACK54,
-            on_click=self._make_heart_handler(wallpaper),
+        heart = Icon(
+            self._heart_icon(wallpaper),
+            size=16,
+            color=Colors.WHITE,
         )
-        plus = IconButton(
-            icon=Icons.ADD,
-            icon_size=16,
-            icon_color=Colors.WHITE,
-            bgcolor=Colors.BLACK54,
-            on_click=self._make_plus_handler(wallpaper),
+        plus = Icon(
+            self._plus_icon(wallpaper),
+            size=16,
+            color=Colors.WHITE,
         )
+        # NOTE: a single GestureDetector owns every tap on the tile.
+        # Buttons are visual-only Icons: nested IconButtons inside a
+        # tapping parent lose the Flutter gesture arena and silently
+        # never fire, while a handler-less parent detector is rejected
+        # by Flet outright. Button taps dispatch by local coordinates
+        # (top-left zone); everything else opens the preview.
+        # Buttons sit top-left (not top-right) so the zone needs no
+        # tile width to resolve. data lives on the root for handlers.
         tile = GestureDetector(
             data=index,
-            on_tap=self.handle_image_click,
+            on_tap=self.handle_tile_tap,
             on_double_tap=self.handle_image_double_click,
             content=Container(
                 border_radius=12,
@@ -552,11 +566,17 @@ class MiddlePanel(GridView, LoggerMixin):
                     controls=[
                         img,
                         Container(
-                            alignment=Alignment.TOP_RIGHT,
+                            alignment=Alignment.TOP_LEFT,
                             padding=4,
-                            content=Row(
-                                spacing=4,
-                                controls=[heart, plus],
+                            content=Container(
+                                padding=4,
+                                border_radius=8,
+                                bgcolor=Colors.BLACK54,
+                                content=Row(
+                                    spacing=8,
+                                    tight=True,
+                                    controls=[heart, plus],
+                                ),
                             ),
                         ),
                         Container(
@@ -582,7 +602,77 @@ class MiddlePanel(GridView, LoggerMixin):
             ),
         )
         self._fav_buttons[id(tile)] = heart
+        self._plus_buttons[id(tile)] = plus
         return tile
+
+    @staticmethod
+    def _tap_point(e: Any) -> tuple[float, float] | None:
+        """Extract tap coordinates relative to the tile.
+
+        Args:
+            e: Tap event from the tile detector.
+
+        Returns:
+            (x, y) in DIPs, or None when unavailable.
+        """
+        point = getattr(e, "local_position", None)
+        if point is None:
+            return None
+        try:
+            return (float(point.x), float(point.y))
+        except (TypeError, ValueError, AttributeError):
+            return None
+
+    def _tap_target(
+        self, point: tuple[float, float] | None
+    ) -> str:
+        """Map a tap point to an action name.
+
+        Args:
+            point: (x, y) tap coordinates, or None.
+
+        Returns:
+            "heart", "plus" or "preview".
+        """
+        if point is None:
+            return "preview"
+        x, y = point
+        if y < self.BUTTON_ZONE_HEIGHT and x < self.BUTTON_ZONE_WIDTH:
+            if x < self.BUTTON_ZONE_WIDTH / 2:
+                return "heart"
+            return "plus"
+        return "preview"
+
+    def handle_tile_tap(self, e) -> None:
+        """Dispatch a tile tap to buttons or the preview.
+
+        Args:
+            e: Tap event; the control data holds the cache index.
+        """
+        target = self._tap_target(self._tap_point(e))
+        if target == "heart":
+            self._publish_tile_wallpaper(e, bus.TOPIC_FAVORITE_TOGGLE)
+        elif target == "plus":
+            self._publish_tile_wallpaper(e, bus.TOPIC_COLLECTION_PICK)
+        else:
+            self.handle_image_click(e)
+
+    def _publish_tile_wallpaper(self, e: Any, topic: str) -> None:
+        """Publish the tapped tile wallpaper on a bus topic.
+
+        Args:
+            e: Tap event; the control data holds the cache index.
+            topic: Bus topic for the message.
+        """
+        try:
+            wallpaper = self._wallpapers[e.control.data]
+        except (IndexError, TypeError, AttributeError):
+            return
+        bus.publish(
+            getattr(self, "page", None),
+            topic,
+            {"wallpaper": wallpaper},
+        )
 
     def _heart_icon(self, wallpaper: Dict[str, Any]) -> Any:
         """Return the filled heart when favorited, else the outline."""
@@ -596,45 +686,37 @@ class MiddlePanel(GridView, LoggerMixin):
             self._lg.debug(f"Favorite state check failed: {e}")
         return Icons.FAVORITE_BORDER
 
-    def _suppress_preview(self) -> None:
-        """Ignore tile taps briefly (button taps bubble to the tile)."""
-        self._suppress_until = time.monotonic() + 0.3
+    def _plus_icon(self, wallpaper: Dict[str, Any]) -> Any:
+        """Return the check when the wallpaper is in any collection."""
+        if self._fav_store is None:
+            return Icons.ADD
+        try:
+            wid = str(wallpaper.get("id", ""))
+            if wid and self._fav_store.collections_containing(wid):
+                return Icons.CHECK_CIRCLE
+        except Exception as e:
+            self._lg.debug(f"Collection state check failed: {e}")
+        return Icons.ADD
 
-    def _make_heart_handler(self, wallpaper: Dict[str, Any]) -> Any:
-        """Return the one-click favorite toggle handler."""
+    def _reindex_tile(self, tile: Any, pos: int) -> None:
+        """Sync the cache index on a tile.
 
-        def handler(e) -> None:
-            self._suppress_preview()
-            bus.publish(
-                getattr(self, "page", None),
-                bus.TOPIC_FAVORITE_TOGGLE,
-                {"wallpaper": wallpaper},
-            )
-
-        return handler
-
-    def _make_plus_handler(self, wallpaper: Dict[str, Any]) -> Any:
-        """Return the collection picker handler."""
-
-        def handler(e) -> None:
-            self._suppress_preview()
-            bus.publish(
-                getattr(self, "page", None),
-                bus.TOPIC_COLLECTION_PICK,
-                {"wallpaper": wallpaper},
-            )
-
-        return handler
+        Eviction shifts positions; stale indices resolve wrong
+        wallpapers on tap. Tiles without a favorite button (e.g.
+        the outage placeholder) are skipped.
+        """
+        if id(tile) not in self._fav_buttons:
+            return
+        tile.data = pos
 
     def _refresh_favorite_states(self) -> None:
-        """Sync heart icons with the favorites store."""
+        """Sync heart and check icons with the favorites store."""
         if self._fav_store is None:
             return
         updated = False
         for tile in self.controls:
-            if not isinstance(tile, GestureDetector):
-                continue
             button = self._fav_buttons.get(id(tile))
+            plus = self._plus_buttons.get(id(tile))
             if button is None:
                 continue
             try:
@@ -645,6 +727,11 @@ class MiddlePanel(GridView, LoggerMixin):
             if button.icon != icon:
                 button.icon = icon
                 updated = True
+            if plus is not None:
+                check = self._plus_icon(wallpaper)
+                if plus.icon != check:
+                    plus.icon = check
+                    updated = True
         if updated:
             try:
                 self.update()
@@ -675,15 +762,9 @@ class MiddlePanel(GridView, LoggerMixin):
     def handle_image_click(self, e) -> None:
         """Show the clicked wallpaper preview in the right panel.
 
-        Taps arriving right after a tile button press (heart/plus
-        bubble up to the tile) are ignored via the suppress window.
-
         Args:
             e: Tap event; the control data holds the cache index.
         """
-        if time.monotonic() < self._suppress_until:
-            self._lg.debug("Tile tap suppressed after button press.")
-            return
         index = e.control.data
         wallpaper = self._wallpapers[index]
         self._lg.debug(f"Wallpaper index is - {index}.")

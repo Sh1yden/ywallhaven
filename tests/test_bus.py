@@ -69,9 +69,14 @@ def test_topics_are_namespaced():
             bus.TOPIC_FAVORITE_TOGGLE,
             bus.TOPIC_COLLECTION_PICK,
             bus.TOPIC_COLLECTION_DOWNLOAD,
+            bus.TOPIC_COLLECTION_REMOVE_ONE,
+            bus.TOPIC_COLLECTION_DELETE_SELECTED,
+            bus.TOPIC_COLLECTION_DOWNLOAD_SELECTED,
+            bus.TOPIC_COLLECTION_MOVE_SELECTED,
+            bus.TOPIC_SLIDESHOW_SELECTION,
             bus.TOPIC_API_KEY,
         }
-    ) == 17
+    ) == 22
 
 
 def test_publish_sends_on_topic():

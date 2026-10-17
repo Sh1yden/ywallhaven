@@ -56,6 +56,21 @@ TOPIC_COLLECTION_PICK = "ywallhaven/collection_pick"
 TOPIC_COLLECTION_DOWNLOAD = "ywallhaven/collection_download"
 """Props -> app: {"kind": ..., "id": ...} (download dialog)."""
 
+TOPIC_COLLECTION_REMOVE_ONE = "ywallhaven/collection_remove_one"
+"""Contents -> app: {"kind", "id", "wallpaper_id"} (no confirm)."""
+
+TOPIC_COLLECTION_DELETE_SELECTED = "ywallhaven/collection_delete_sel"
+"""Contents -> app: {"kind", "id", "wallpaper_ids": [...]}."""
+
+TOPIC_COLLECTION_DOWNLOAD_SELECTED = "ywallhaven/collection_down_sel"
+"""Contents -> app: {"kind", "id", "wallpaper_ids": [...]}."""
+
+TOPIC_COLLECTION_MOVE_SELECTED = "ywallhaven/collection_move_sel"
+"""Contents -> app: {"kind", "id", "wallpaper_ids": [...]} (picker)."""
+
+TOPIC_SLIDESHOW_SELECTION = "ywallhaven/slideshow_selection"
+"""Contents -> app: {"kind", "id", "wallpaper_ids": [...]}."""
+
 TOPIC_API_KEY = "ywallhaven/api_key"
 """Settings -> left+right: {"api_key": str}."""
 

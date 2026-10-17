@@ -50,6 +50,7 @@ from app.interface.components import (
     RightPanel,
     SettingsPanel,
 )
+from app.interface.components.collections_panel import ICON_PRESETS
 from app.interface.components.update_dialog import check_and_offer
 from app.interface.themes import apply_theme, get_theme, list_themes
 from app.service.collection_io import (
@@ -546,13 +547,13 @@ async def _build_ui(page: Page) -> None:
         _show_selection()
 
     def _open_create_dialog(
-        wallpaper: Dict[str, Any] | None = None,
+        wallpaper: Dict[str, Any] | List[Dict[str, Any]] | None = None,
     ) -> None:
         """Show the new-collection dialog with cover and settings.
 
         Args:
-            wallpaper: Optional wallpaper to add right after creation
-                (coming from the add-to-collection picker).
+            wallpaper: Optional wallpaper (or list) to add right
+                after creation (coming from the picker).
         """
         name_field = TextField(
             label="Collection name",
@@ -572,13 +573,7 @@ async def _build_ui(page: Page) -> None:
             value="IMAGE",
             options=[
                 DropdownOption(key=name, text=name)
-                for name in (
-                    "FAVORITE",
-                    "IMAGE",
-                    "LANDSCAPE",
-                    "FOLDER",
-                    "STAR",
-                )
+                for name in ICON_PRESETS
             ],
         )
         interval_field = TextField(
@@ -586,25 +581,35 @@ async def _build_ui(page: Page) -> None:
             value="300",
             filled=True,
         )
+        busy = {"value": False}
 
         def _close(e=None) -> None:
             page.pop_dialog()
 
         def _create(e) -> None:
+            # Guard against double taps: the dialog stays open a
+            # frame after the first press, and a second press would
+            # create a same-named twin collection.
+            if busy["value"]:
+                return
+            busy["value"] = True
             name = (name_field.value or "").strip()
             if not name:
                 name_field.error = "Name is required"
                 name_field.update()
+                busy["value"] = False
                 return
             try:
                 interval = int((interval_field.value or "").strip())
             except (ValueError, TypeError):
                 interval_field.error = "Invalid number"
                 interval_field.update()
+                busy["value"] = False
                 return
             if interval < 10:
                 interval_field.error = "Minimum 10 seconds"
                 interval_field.update()
+                busy["value"] = False
                 return
             cover: Dict[str, Any] = {"mode": cover_dd.value or "last"}
             if cover["mode"] == "icon":
@@ -615,12 +620,22 @@ async def _build_ui(page: Page) -> None:
             if created is None:
                 name_field.error = "Could not create"
                 name_field.update()
+                busy["value"] = False
                 return
             page.pop_dialog()
-            if wallpaper is not None:
-                store.add(created["id"], wallpaper)
+            pending = (
+                [wallpaper]
+                if isinstance(wallpaper, dict)
+                else list(wallpaper or [])
+            )
+            for item in pending:
+                if item.get("id"):
+                    store.add(created["id"], item)
             collections_state["kind"] = "collection"
             collections_state["id"] = created["id"]
+            # Close the creation dialog and, when launched from the
+            # add-to-collection picker, the picker underneath too.
+            page.pop_dialog()
             _refresh_collections()
 
         page.show_dialog(
@@ -785,12 +800,18 @@ async def _build_ui(page: Page) -> None:
 
     def _open_collection_download(kind: str, sid: str) -> None:
         """Show the download-all dialog with ZIP/folder choice."""
-        from flet import ProgressBar
-
         name, walls = _resolve_download_items(kind, sid)
         if not walls:
             _show_snack(page, "Nothing to download", is_error=True)
             return
+        _open_download_dialog(name, walls)
+
+    def _open_download_dialog(
+        name: str, walls: List[Dict[str, Any]]
+    ) -> None:
+        """Show the download dialog for an explicit wallpaper list."""
+        from flet import ProgressBar
+
         status = Text(f"0/{len(walls)} files")
         bar = ProgressBar(value=0)
 
@@ -899,6 +920,159 @@ async def _build_ui(page: Page) -> None:
             )
         )
 
+    def _selected_wallpapers(
+        kind: str, sid: str, ids: List[str]
+    ) -> tuple[str, List[Dict[str, Any]]]:
+        """Resolve checked ids to (name, wallpapers) for actions."""
+        if kind == "folder":
+            folder = next(
+                (f for f in store.folders() if f.get("id") == sid),
+                None,
+            )
+            if folder is None:
+                return "", []
+            scanned = {
+                str(w.get("id", "")): w
+                for w in store.scan_folder(folder.get("path", ""))
+            }
+            walls = [scanned[i] for i in ids if i in scanned]
+            return folder.get("name", "folder"), walls
+        collection = store.get(sid)
+        if collection is None:
+            return "", []
+        by_id = {
+            str(w.get("id", "")): w
+            for w in collection.get("wallpapers") or []
+        }
+        walls = [by_id[i] for i in ids if i in by_id]
+        return collection.get("name", "collection"), walls
+
+    def _on_bus_collection_remove_one(topic: str, message: Any) -> None:
+        """Remove one wallpaper from a collection (no confirm)."""
+        payload = message or {}
+        if payload.get("kind") != "collection":
+            return
+        sid = payload.get("id", "")
+        wid = payload.get("wallpaper_id", "")
+        if sid and wid and store.remove(sid, wid):
+            _show_snack(page, "Removed from collection")
+            bus.publish(page, bus.TOPIC_FAVORITES, {})
+            _refresh_collections()
+
+    def _on_bus_collection_delete_selected(
+        topic: str, message: Any
+    ) -> None:
+        """Confirm and delete checked wallpapers."""
+        payload = message or {}
+        if payload.get("kind") != "collection":
+            return
+        sid = payload.get("id", "")
+        ids = payload.get("wallpaper_ids") or []
+        if not sid or not ids:
+            return
+        collection = store.get(sid)
+        if collection is None:
+            return
+
+        def _close(e=None) -> None:
+            page.pop_dialog()
+
+        def _apply(e) -> None:
+            page.pop_dialog()
+            for wid in ids:
+                store.remove(sid, wid)
+            # Checked positions now point at surviving wallpapers;
+            # stale checks would remove the wrong set next time.
+            collections_panel.exit_selection()
+            _show_snack(page, f"Removed {len(ids)}")
+            bus.publish(page, bus.TOPIC_FAVORITES, {})
+            _refresh_collections()
+
+        page.show_dialog(
+            AlertDialog(
+                modal=True,
+                title=Text("Delete selected?"),
+                content=Text(
+                    f"{len(ids)} wallpapers will be removed from "
+                    f"'{collection.get('name', '')}'."
+                ),
+                actions=[
+                    TextButton("Cancel", on_click=_close),
+                    FilledButton(content="Delete", on_click=_apply),
+                ],
+            )
+        )
+
+    def _on_bus_collection_download_selected(
+        topic: str, message: Any
+    ) -> None:
+        """Download checked wallpapers through the dialog."""
+        payload = message or {}
+        name, walls = _selected_wallpapers(
+            payload.get("kind", "collection"),
+            payload.get("id", ""),
+            payload.get("wallpaper_ids") or [],
+        )
+        if not walls:
+            _show_snack(page, "Nothing to download", is_error=True)
+            return
+        _open_download_dialog(f"{name} selection", walls)
+
+    def _on_bus_collection_move_selected(
+        topic: str, message: Any
+    ) -> None:
+        """Add checked wallpapers to another collection."""
+        payload = message or {}
+        _name, walls = _selected_wallpapers(
+            payload.get("kind", "collection"),
+            payload.get("id", ""),
+            payload.get("wallpaper_ids") or [],
+        )
+        if walls:
+            _open_pick_dialog_list(walls)
+            # The checked set did its job (resolved into the picker);
+            # clear it now so cancel does not leave stale checks.
+            collections_panel.exit_selection()
+
+    def _on_bus_slideshow_selection(topic: str, message: Any) -> None:
+        """Run the slideshow from checked wallpapers."""
+        payload = message or {}
+        kind = payload.get("kind", "collection")
+        sid = payload.get("id", "")
+        _name, walls = _selected_wallpapers(
+            kind, sid, payload.get("wallpaper_ids") or []
+        )
+        if not walls:
+            return
+
+        async def _run() -> None:
+            if kind == "folder":
+                folder = next(
+                    (
+                        f
+                        for f in store.folders()
+                        if f.get("id") == sid
+                    ),
+                    None,
+                )
+                interval = ((folder or {}).get("settings") or {}).get(
+                    "interval", 300
+                )
+            else:
+                collection = store.get(sid) or {}
+                interval = (collection.get("settings") or {}).get(
+                    "interval", 300
+                )
+            await slideshow.start(
+                walls,
+                label="Selection",
+                interval=interval,
+                order="sequential",
+            )
+            _show_snack(page, "Slideshow from selection")
+
+        page.run_task(_run)
+
     def _on_bus_collection_download(topic: str, message: Any) -> None:
         """Open the download dialog for a collection/folder."""
         payload = message or {}
@@ -929,7 +1103,14 @@ async def _build_ui(page: Page) -> None:
             _open_pick_dialog(wallpaper)
 
     def _open_pick_dialog(wallpaper: Dict[str, Any]) -> None:
-        """Show the collection picker with a create entry."""
+        """Show the collection picker for one wallpaper."""
+        _open_pick_dialog_list([wallpaper])
+
+    def _open_pick_dialog_list(wallpapers: List[Dict[str, Any]]) -> None:
+        """Show the collection picker adding every wallpaper."""
+        wallpapers = [w for w in wallpapers if w.get("id")]
+        if not wallpapers:
+            return
 
         def _close(e=None) -> None:
             page.pop_dialog()
@@ -937,32 +1118,56 @@ async def _build_ui(page: Page) -> None:
         def _choose(collection_id: str) -> Callable:
             def _add(e) -> None:
                 page.pop_dialog()
-                if store.add(collection_id, wallpaper):
+                added = sum(
+                    1
+                    for wallpaper in wallpapers
+                    if store.add(collection_id, wallpaper)
+                )
+                total = len(wallpapers)
+                if added == total:
                     _show_snack(page, "Added to collection")
+                elif added:
+                    _show_snack(
+                        page, f"Added {added}/{total} (rest dupes)"
+                    )
                 else:
                     _show_snack(page, "Already in collection")
                 bus.publish(page, bus.TOPIC_FAVORITES, {})
 
             return _add
 
+        # For a single wallpaper, rows of collections already holding
+        # it get a check and stay disabled (no duplicate add). For a
+        # multi-paste (move selected), partial hits stay enabled.
+        contains: set[str] = set()
+        if len(wallpapers) == 1:
+            contains = set(
+                store.collections_containing(
+                    str(wallpapers[0].get("id", ""))
+                )
+            )
+
         rows: List[Any] = []
         for collection in store.collections():
             count = len(collection.get("wallpapers") or [])
             marker = "♥ " if collection["id"] == FAVORITES_ID else ""
+            already = collection["id"] in contains
+            if already:
+                marker = f"{marker}✓ "
             rows.append(
                 TextButton(
                     content=f"{marker}{collection.get('name', '?')} "
                     f"({count})",
+                    disabled=already,
                     on_click=_choose(collection["id"]),
                 )
             )
         rows.append(
             TextButton(
                 content="+ New collection",
-                on_click=lambda e: (
-                    page.pop_dialog(),
-                    _open_create_dialog(wallpaper),
-                ),
+                # Stacked above the picker on purpose: cancelling
+                # the creation dialog returns to the picker.
+                on_click=lambda e: _open_create_dialog(wallpapers),
             )
         )
         page.show_dialog(
@@ -1027,6 +1232,29 @@ async def _build_ui(page: Page) -> None:
     )
     bus.subscribe(
         page, bus.TOPIC_COLLECTION_DOWNLOAD, _on_bus_collection_download
+    )
+    bus.subscribe(
+        page,
+        bus.TOPIC_COLLECTION_REMOVE_ONE,
+        _on_bus_collection_remove_one,
+    )
+    bus.subscribe(
+        page,
+        bus.TOPIC_COLLECTION_DELETE_SELECTED,
+        _on_bus_collection_delete_selected,
+    )
+    bus.subscribe(
+        page,
+        bus.TOPIC_COLLECTION_DOWNLOAD_SELECTED,
+        _on_bus_collection_download_selected,
+    )
+    bus.subscribe(
+        page,
+        bus.TOPIC_COLLECTION_MOVE_SELECTED,
+        _on_bus_collection_move_selected,
+    )
+    bus.subscribe(
+        page, bus.TOPIC_SLIDESHOW_SELECTION, _on_bus_slideshow_selection
     )
 
     icon_bytes = _app_icon_bytes()

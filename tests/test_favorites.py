@@ -40,6 +40,22 @@ def test_corrupted_file_recreated(tmp_path):
     assert [c["id"] for c in store.collections()] == [FAVORITES_ID]
 
 
+def test_builtin_name_migrated_to_english(tmp_path):
+    from app.service.favorites import FAVORITES_NAME
+
+    target = tmp_path / "favorites.json"
+    target.write_text(
+        '{"collections": [{"id": "favorites", "name": "Избранное", '
+        '"builtin": true, "wallpapers": []}], "folders": []}',
+        encoding="utf-8",
+    )
+
+    store = FavoritesStore(target)
+
+    assert store.get(FAVORITES_ID)["name"] == FAVORITES_NAME
+    assert FAVORITES_NAME == "Favorites"
+
+
 def test_add_and_duplicate(tmp_path):
     store = _store(tmp_path)
 
@@ -50,6 +66,23 @@ def test_add_and_duplicate(tmp_path):
     assert store.remove(FAVORITES_ID, "w1") is True
     assert store.remove(FAVORITES_ID, "w1") is False
     assert store.contains(FAVORITES_ID, "w1") is False
+
+
+def test_collections_containing(tmp_path):
+    store = _store(tmp_path)
+
+    store.add(FAVORITES_ID, _wallpaper("w1"))
+    created = store.create("Nature")
+    store.add(created["id"], _wallpaper("w1"))
+    store.add(created["id"], _wallpaper("w2"))
+
+    assert store.collections_containing("w1") == [
+        FAVORITES_ID,
+        created["id"],
+    ]
+    assert store.collections_containing("w2") == [created["id"]]
+    assert store.collections_containing("zz") == []
+    assert store.collections_containing("") == []
 
 
 def test_add_unknown_collection(tmp_path):

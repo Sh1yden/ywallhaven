@@ -766,48 +766,57 @@ def _panel_with_store(monkeypatch, tmp_path):
     return panel, store, stub
 
 
-def test_tile_buttons_publish_toggle_and_pick(monkeypatch, tmp_path):
+def _tap_event(index, x, y):
+    from types import SimpleNamespace
+
+    return SimpleNamespace(
+        control=SimpleNamespace(data=index),
+        local_position=SimpleNamespace(x=x, y=y),
+    )
+
+
+def test_tile_tap_dispatches_by_zone(monkeypatch, tmp_path):
     from app.interface import bus as bus_mod
 
     panel, _store, stub = _panel_with_store(monkeypatch, tmp_path)
-    tile = panel._build_title(_gallery_wallpaper(), 0)
+    panel._wallpapers.append(_gallery_wallpaper())
 
-    pressed = []
-
-    def _walk(control):
-        from flet import IconButton
-
-        if isinstance(control, IconButton):
-            pressed.append(control)
-        for child in getattr(control, "controls", []) or []:
-            _walk(child)
-        content = getattr(control, "content", None)
-        if content is not None:
-            _walk(content)
-
-    _walk(tile)
-    assert len(pressed) == 2
-    pressed[0].on_click(None)
-    pressed[1].on_click(None)
+    panel.handle_tile_tap(_tap_event(0, 10.0, 10.0))
+    panel.handle_tile_tap(_tap_event(0, 50.0, 10.0))
+    panel.handle_tile_tap(_tap_event(0, 400.0, 400.0))
 
     topics = [t for t, _m in stub.sent]
     assert topics == [
         bus_mod.TOPIC_FAVORITE_TOGGLE,
         bus_mod.TOPIC_COLLECTION_PICK,
+        bus_mod.TOPIC_PREVIEW,
     ]
     assert stub.sent[0][1]["wallpaper"]["id"] == "w1"
+    assert stub.sent[2][1]["index"] == 0
 
 
-def test_button_press_suppresses_preview(monkeypatch, tmp_path):
+def test_tile_tap_without_position_opens_preview(monkeypatch, tmp_path):
     from types import SimpleNamespace
+
+    from app.interface import bus as bus_mod
 
     panel, _store, stub = _panel_with_store(monkeypatch, tmp_path)
     panel._wallpapers.append(_gallery_wallpaper())
-    panel._suppress_until = 9999999999.0
 
-    panel.handle_image_click(SimpleNamespace(control=SimpleNamespace(data=0)))
+    panel.handle_tile_tap(
+        SimpleNamespace(control=SimpleNamespace(data=0))
+    )
 
-    assert stub.sent == []
+    assert [t for t, _m in stub.sent] == [bus_mod.TOPIC_PREVIEW]
+
+
+def test_tap_target_mapping(panel):
+    assert panel._tap_target(None) == "preview"
+    assert panel._tap_target((10.0, 10.0)) == "heart"
+    assert panel._tap_target((50.0, 10.0)) == "plus"
+    assert panel._tap_target((70.0, 10.0)) == "preview"
+    assert panel._tap_target((400.0, 400.0)) == "preview"
+    assert panel._tap_target((10.0, 400.0)) == "preview"
 
 
 def test_heart_reflects_store_and_refresh(monkeypatch, tmp_path):
@@ -825,6 +834,41 @@ def test_heart_reflects_store_and_refresh(monkeypatch, tmp_path):
     store.add(FAVORITES_ID, _gallery_wallpaper())
     panel._refresh_favorite_states()
     assert heart.icon == Icons.FAVORITE
+
+
+def test_plus_shows_check_when_in_any_collection(monkeypatch, tmp_path):
+    from flet import Icons
+
+    from app.service.favorites import FAVORITES_ID
+
+    panel, store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    panel._wallpapers.append(_gallery_wallpaper())
+    tile = panel._build_title(_gallery_wallpaper(), 0)
+    panel.controls.append(tile)
+    plus = panel._plus_buttons[id(tile)]
+
+    assert plus.icon == Icons.ADD
+    store.add(FAVORITES_ID, _gallery_wallpaper())
+    panel._refresh_favorite_states()
+    assert plus.icon == Icons.CHECK_CIRCLE
+    store.remove(FAVORITES_ID, _gallery_wallpaper()["id"])
+    panel._refresh_favorite_states()
+    assert plus.icon == Icons.ADD
+
+
+def test_user_collection_also_shows_check(monkeypatch, tmp_path):
+    from flet import Icons
+
+    panel, store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    panel._wallpapers.append(_gallery_wallpaper())
+    tile = panel._build_title(_gallery_wallpaper(), 0)
+    panel.controls.append(tile)
+    plus = panel._plus_buttons[id(tile)]
+
+    created = store.create("Nature")
+    store.add(created["id"], _gallery_wallpaper())
+    panel._refresh_favorite_states()
+    assert plus.icon == Icons.CHECK_CIRCLE
 
 
 def test_favorites_subscription_lifecycle(monkeypatch, tmp_path):
@@ -848,3 +892,52 @@ def test_favorites_subscription_lifecycle(monkeypatch, tmp_path):
     panel._unsubscribe_bus()
     assert bus_mod.TOPIC_FILTERS in unsubs
     assert bus_mod.TOPIC_FAVORITES in unsubs
+
+
+def test_will_unmount_keeps_client_alive(monkeypatch):
+    """Unmount/remount cycles (mode swaps) must not kill the client."""
+    from app.interface import bus as bus_mod
+
+    panel = MiddlePanel()
+    scheduled: list = []
+    unsubs: list = []
+
+    class _PageStub:
+        def run_task(self, fn, *args, **kwargs):
+            scheduled.append(fn)
+            return None
+
+    _attach_page(monkeypatch, panel, _PageStub())
+    monkeypatch.setattr(
+        bus_mod, "unsubscribe", lambda page, topic: unsubs.append(topic)
+    )
+
+    panel.will_unmount()
+
+    assert scheduled == []
+    assert not panel.api_client.client.is_closed
+    assert bus_mod.TOPIC_FILTERS in unsubs
+    assert bus_mod.TOPIC_FAVORITES in unsubs
+    asyncio.run(panel.api_client.close())
+
+
+def test_eviction_reindexes_tiles(monkeypatch, tmp_path):
+    panel, _store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    for i in range(2):
+        tile = panel._build_title(_gallery_wallpaper(f"w{i}"), i + 5)
+        panel.controls.append(tile)
+
+    for pos, tile in enumerate(panel.controls):
+        panel._reindex_tile(tile, pos)
+
+    assert [t.data for t in panel.controls] == [0, 1]
+
+
+def test_reindex_ignores_non_tiles(monkeypatch, tmp_path):
+    from flet import Container
+
+    panel, _store, _stub = _panel_with_store(monkeypatch, tmp_path)
+    tile = Container()
+    panel._reindex_tile(tile, 3)
+    assert tile.data is None
+

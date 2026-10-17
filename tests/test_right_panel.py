@@ -382,7 +382,7 @@ def test_show_empty_favorites_hint(panel, monkeypatch):
             _collect(content)
 
     _collect(panel.content)
-    assert any("избранное" in t for t in texts)
+    assert any("favorites" in t for t in texts)
 
 
 def test_show_collection_delete_only_custom(panel, monkeypatch):
@@ -506,3 +506,25 @@ def test_is_fullscreen_open(panel):
     assert panel.is_fullscreen_open() is False
     panel._fullscreen_layer.visible = True
     assert panel.is_fullscreen_open() is True
+
+
+def test_will_unmount_keeps_client_alive(panel, monkeypatch):
+    """Unmount/remount cycles must not kill the right client."""
+    scheduled: list = []
+
+    class _PageStub:
+        overlay: list = []
+
+        def run_task(self, fn, *args, **kwargs):
+            scheduled.append(fn)
+            return None
+
+    stub = _PageStub()
+    stub.overlay = [panel._fullscreen_layer]
+    _attach_bus_page(monkeypatch, panel, stub)
+
+    panel.will_unmount()
+
+    assert scheduled == []
+    assert not panel._api_client.client.is_closed
+    assert panel._fullscreen_layer not in stub.overlay

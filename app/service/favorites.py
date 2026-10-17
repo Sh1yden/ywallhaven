@@ -17,7 +17,7 @@ from app.core import LoggerMixin
 
 FAVORITES_FILE = "favorites.json"
 FAVORITES_ID = "favorites"
-FAVORITES_NAME = "Избранное"
+FAVORITES_NAME = "Favorites"
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
 
@@ -88,6 +88,9 @@ def _normalize_collection(raw: Any) -> Dict[str, Any] | None:
     name = raw.get("name")
     if not name or not isinstance(name, str):
         name = cid
+    if raw.get("builtin", False) and name == "Избранное":
+        # Migrate the legacy Russian default to English.
+        name = FAVORITES_NAME
     return {
         "id": cid,
         "name": name,
@@ -244,6 +247,28 @@ class FavoritesStore(LoggerMixin):
             return None
         self._lg.info(f"Collection created: {name}.")
         return collection
+
+    def collections_containing(self, wallpaper_id: str) -> List[str]:
+        """Return ids of collections holding the wallpaper.
+
+        Args:
+            wallpaper_id: Normalized wallpaper id.
+
+        Returns:
+            Collection ids in store order, including favorites.
+        """
+        wanted = str(wallpaper_id)
+        if not wanted:
+            return []
+        result: List[str] = []
+        for collection in self._data["collections"]:
+            ids = {
+                str(w.get("id", ""))
+                for w in collection.get("wallpapers") or []
+            }
+            if wanted in ids:
+                result.append(str(collection.get("id", "")))
+        return result
 
     def rename(self, collection_id: str, name: str) -> bool:
         """Rename a collection (builtin included)."""
