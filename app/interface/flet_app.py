@@ -151,6 +151,25 @@ def _bind_file_pickers(page: Page) -> tuple[FilePicker, FilePicker]:
     return file_picker, theme_picker
 
 
+def _streams_zip_to_disk(page: Page) -> bool:
+    """Return True when a zip can be streamed into a picked path.
+
+    Desktop clients return a local path from ``save_file`` that the
+    app writes itself, so large archives never sit in memory. Mobile
+    and web clients require ``src_bytes`` instead (their platform
+    pickers refuse path-only saves), and an unknown platform takes
+    the same safe in-memory route.
+
+    Args:
+        page: The Flet page carrying the client platform.
+
+    Returns:
+        True only for desktop platforms.
+    """
+    platform = getattr(page, "platform", None)
+    return bool(platform is not None and platform.is_desktop())
+
+
 def _log_flet_client_diagnostics() -> None:
     """Log and auto-clean corrupted Flet desktop client cache.
 
@@ -827,28 +846,89 @@ async def _build_ui(page: Page) -> None:
             except Exception as e:
                 _lg.debug(f"Download progress deferred: {e}")
 
+        async def _zip_to_path(target: Path) -> tuple[bool, List[str]]:
+            """Stream the archive into ``target``.
+
+            Returns:
+                (ok, failed ids); a failed or empty archive is dropped
+                from disk so no broken file is left behind.
+            """
+            try:
+                with open(target, "wb") as sink:
+                    ok, failed = await build_zip(
+                        sink,
+                        walls,
+                        middle_panel.api_client.fetch_bytes,
+                        progress=_progress,
+                    )
+            except OSError as e:
+                _lg.error(f"Failed to write zip to {target}: {e}.")
+                ok, failed = False, []
+            if not ok:
+                try:
+                    target.unlink(missing_ok=True)
+                except OSError as e:
+                    _lg.debug(f"Failed to drop partial zip {target}: {e}.")
+            return ok, failed
+
+        def _zip_result_snack(failed: List[str]) -> None:
+            """Report the zip result, honestly counting skipped items."""
+            if failed:
+                _show_snack(
+                    page,
+                    f"Downloaded {len(walls) - len(failed)}/"
+                    f"{len(walls)}",
+                    is_error=True,
+                )
+            else:
+                _show_snack(page, "Collection downloaded")
+
         async def _download_zip(e=None) -> None:
-            data, failed = await build_zip(
+            if _streams_zip_to_disk(page):
+                # Desktop: the picked path is written by the app, so
+                # the archive streams straight to disk. Cancel keeps
+                # the dialog open — "Folder" is still an option.
+                saved = await file_picker.save_file(
+                    dialog_title="Save collection",
+                    file_name=f"{name}.zip",
+                    file_type=FilePickerFileType.CUSTOM,
+                    allowed_extensions=["zip"],
+                )
+                if not saved:
+                    _lg.info("Zip save cancelled by the user.")
+                    return
+                ok, failed = await _zip_to_path(Path(saved))
+                page.pop_dialog()
+                if not ok:
+                    _show_snack(page, "Download failed", is_error=True)
+                else:
+                    _zip_result_snack(failed)
+                return
+
+            # Mobile/web pickers need the whole archive as bytes.
+            buffer = BytesIO()
+            ok, failed = await build_zip(
+                buffer,
                 walls,
                 middle_panel.api_client.fetch_bytes,
                 progress=_progress,
             )
-            if data is None:
-                _show_snack(page, "Download failed", is_error=True)
+            if not ok:
                 page.pop_dialog()
+                _show_snack(page, "Download failed", is_error=True)
                 return
             saved = await file_picker.save_file(
                 dialog_title="Save collection",
                 file_name=f"{name}.zip",
                 file_type=FilePickerFileType.CUSTOM,
                 allowed_extensions=["zip"],
-                src_bytes=data,
+                src_bytes=buffer.getvalue(),
             )
             page.pop_dialog()
-            if saved:
-                _show_snack(page, "Collection downloaded")
-            else:
+            if not saved:
                 _show_snack(page, "Save cancelled")
+                return
+            _zip_result_snack(failed)
 
         async def _download_folder(e=None) -> None:
             directory = await file_picker.get_directory_path(

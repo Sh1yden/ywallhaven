@@ -23,10 +23,18 @@ Backends:
   Android wiring (``WallpaperManager``) is intentionally left for
   the future full Android client.
 
-Temp file policy: a single fixed file ``TEMP/ywallhaven-wallpaper.jpg``
-is overwritten on every install and never deleted right after applying
-(the OS requires the path to stay alive). It is removed only by
-:func:`cleanup_temp`, which the application shutdown routine calls.
+Temp file policy: every install writes a fresh file
+``tmp/ywallhaven-wallpaper-<ns>.jpg`` next to the application
+(same rule as ``config.json``). A unique name per install is
+required: wallpaper shells (Noctalia, hyprpaper) cache the
+decoded image by path and keep showing the first picture under
+an unchanged path even after the file was overwritten. After a
+successful apply the older generations are pruned (the two
+newest files stay: the applied one plus the previous, which the
+compositor may still reference during transitions). All of them
+are removed by :func:`cleanup_temp` on application shutdown;
+the legacy single-file paths from older builds (app-side and
+system ``TEMP``) are dropped there too, when permissions allow.
 """
 
 import asyncio
@@ -35,6 +43,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from io import BytesIO
 from pathlib import Path
 from tempfile import gettempdir
@@ -50,7 +59,10 @@ SPI_SETDESKWALLPAPER = 20
 SPIF_UPDATEINIFILE = 0x01
 SPIF_SENDCHANGE = 0x02
 
+WALLPAPER_TEMP_PREFIX = "ywallhaven-wallpaper"
 WALLPAPER_TEMP_NAME = "ywallhaven-wallpaper.jpg"
+# The applied file plus one previous generation for transitions.
+TEMP_KEEP = 2
 RATIO_TOLERANCE = 0.01
 
 _SUBPROCESS_TIMEOUT = 15.0
@@ -78,13 +90,52 @@ def is_supported() -> bool:
     return _select_backend().supports
 
 
+def _temp_dir() -> Path:
+    """Return the wallpaper temp directory next to the application.
+
+    Cwd-relative, same rule as ``config.json``.
+    """
+    return Path("tmp")
+
+
 def temp_path() -> Path:
-    """Return the fixed temp path for the wallpaper JPG.
+    """Return a fresh unique temp path for the wallpaper JPG.
+
+    Called per install: shell caches are keyed by path, so an
+    unchanged name would make Noctalia/hyprpaper keep showing the
+    first decoded picture instead of the new file.
 
     Returns:
-        ``TEMP/ywallhaven-wallpaper.jpg`` path (overwritten each time).
+        ``tmp/ywallhaven-wallpaper-<ns>.jpg`` next to the application.
     """
-    return Path(gettempdir()) / WALLPAPER_TEMP_NAME
+    return _temp_dir() / f"{WALLPAPER_TEMP_PREFIX}-{time.time_ns()}.jpg"
+
+
+def _prune_temp(keep: Path) -> None:
+    """Remove old wallpaper temp files, keeping the two newest.
+
+    Args:
+        keep: The just-applied file; excluded from removal.
+    """
+    try:
+        files = sorted(
+            (
+                p
+                for p in _temp_dir().glob(
+                    f"{WALLPAPER_TEMP_PREFIX}-*.jpg"
+                )
+                if p.is_file() and p != keep
+            ),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except OSError as e:
+        _lg.debug(f"Temp files prune skipped: {e}.")
+        return
+    for gone in files[: -(TEMP_KEEP - 1)]:
+        try:
+            gone.unlink()
+        except OSError as e:
+            _lg.debug(f"Old temp file not removed {gone.name}: {e}.")
 
 
 def get_screen_size() -> tuple[int, int] | None:
@@ -184,10 +235,12 @@ def pick_or_resize(
 
 
 def write_temp(data: bytes) -> Path | None:
-    """Overwrite the fixed temp JPG with the given bytes.
+    """Write the JPG bytes to a fresh unique temp file.
 
     The file is intentionally NOT deleted here: the OS requires the
-    wallpaper path to stay alive after applying it.
+    wallpaper path to stay alive after applying it. Older generations
+    are pruned after apply (see :func:`_prune_temp`) and everything
+    is removed at shutdown by :func:`cleanup_temp`.
 
     Args:
         data: JPG bytes to store.
@@ -197,6 +250,7 @@ def write_temp(data: bytes) -> Path | None:
     """
     path = temp_path()
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
     except OSError as e:
         _lg.error(f"Failed to write wallpaper temp file {path}: {e}.")
@@ -219,15 +273,22 @@ def apply_wallpaper(path: Path) -> bool:
 
 
 def cleanup_temp() -> None:
-    """Remove the temp wallpaper file (application shutdown only).
+    """Remove all wallpaper temp files (application shutdown only).
 
     Wired into the shutdown ``cleanup()`` routine; never called right
-    after applying the wallpaper.
+    after applying the wallpaper. Also drops the legacy single-file
+    temp of older builds (app-side and system ``TEMP``) when
+    permissions allow.
     """
-    try:
-        temp_path().unlink(missing_ok=True)
-    except OSError as e:
-        _lg.error(f"Failed to clean wallpaper temp file: {e}.")
+    paths = [
+        *_temp_dir().glob(f"{WALLPAPER_TEMP_PREFIX}*.jpg"),
+        Path(gettempdir(), WALLPAPER_TEMP_NAME),
+    ]
+    for path in paths:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError as e:
+            _lg.debug(f"Temp file not removed {path}: {e}.")
 
 
 async def set_wallpaper_from_url(
@@ -280,9 +341,14 @@ async def set_wallpaper_from_url(
     path = write_temp(prepared)
     if path is None:
         return False, "Failed to save wallpaper file"
-    if not apply_wallpaper(path):
+    applied = path.resolve()
+    if not apply_wallpaper(applied):
         return False, backend.fail_message
-    _lg.info(f"Wallpaper set from {url} ({len(prepared)} bytes).")
+    _prune_temp(applied)
+    _lg.info(
+        f"Wallpaper set from {url} ({len(prepared)} bytes) "
+        f"via {applied.name}."
+    )
     return True, "Wallpaper set"
 
 

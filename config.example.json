@@ -4,7 +4,7 @@ He default create in first run app.
 {
     "MODE": "dev or prod",
     "LOG_LVL": "DEBUG, WARNING, INFO, and etc.",
-    "PORT": 8550,
+    "PORT": 9864,
     "APIK": "YOUR_WALLHAVEN_API_KEY",
     "CHECK_UPDATES": true,
     "CHECK_PRERELEASES": false,

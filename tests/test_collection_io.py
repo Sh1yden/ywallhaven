@@ -1,6 +1,7 @@
 """Tests for collection download helpers and the slideshow engine."""
 
 import asyncio
+import io
 import zipfile
 
 import pytest
@@ -61,39 +62,141 @@ async def test_resolve_bytes_local(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_build_zip_packs_and_reports(tmp_path):
-    target = tmp_path / "a.jpg"
-    target.write_bytes(b"local")
+async def test_build_zip_streams_and_reports(tmp_path):
+    local = tmp_path / "a.jpg"
+    local.write_bytes(b"local")
 
     async def _fetch(url):
         return {"https://example.com/w1.jpg": b"one"}.get(url)
 
     seen: list = []
-    data, failed = await build_zip(
+    sink = io.BytesIO()
+    ok, failed = await build_zip(
+        sink,
         [
             _wallpaper(),
-            {"id": "l1", "path": str(target)},
+            {"id": "l1", "path": str(local)},
             _wallpaper("bad", "https://example.com/missing.jpg"),
         ],
         _fetch,
         progress=lambda done, total: seen.append((done, total)),
     )
 
-    assert data is not None
+    assert ok is True
     assert failed == ["bad"]
     assert seen == [(1, 3), (2, 3), (3, 3)]
-    with zipfile.ZipFile(__import__("io").BytesIO(data)) as archive:
+    with zipfile.ZipFile(sink) as archive:
         assert sorted(archive.namelist()) == ["a.jpg", "w1.jpg"]
+        assert archive.read("w1.jpg") == b"one"
+        assert archive.read("a.jpg") == b"local"
 
 
 @pytest.mark.asyncio
-async def test_build_zip_all_failed_returns_none():
+async def test_build_zip_streams_into_a_real_file(tmp_path):
+    local = tmp_path / "pic.png"
+    local.write_bytes(b"png-bytes")
+    target = tmp_path / "collection.zip"
+
+    async def _fetch(url):
+        raise AssertionError("must not fetch local files")
+
+    with open(target, "wb") as sink:
+        ok, failed = await build_zip(
+            sink, [{"id": "l1", "path": str(local)}], _fetch
+        )
+
+    assert (ok, failed) == (True, [])
+    with zipfile.ZipFile(target) as archive:
+        assert archive.read("pic.png") == b"png-bytes"
+
+
+@pytest.mark.asyncio
+async def test_build_zip_all_failed_reports_empty():
     async def _fetch(url):
         return None
 
-    data, failed = await build_zip([_wallpaper()], _fetch)
-    assert data is None
+    sink = io.BytesIO()
+    ok, failed = await build_zip(sink, [_wallpaper()], _fetch)
+    assert ok is False
     assert failed == ["w1"]
+    with zipfile.ZipFile(sink) as archive:
+        assert archive.namelist() == []
+
+
+@pytest.mark.asyncio
+async def test_build_zip_skips_missing_local(tmp_path):
+    async def _fetch(url):
+        raise AssertionError("must not fetch local files")
+
+    sink = io.BytesIO()
+    ok, failed = await build_zip(
+        sink,
+        [{"id": "gone", "path": str(tmp_path / "nope.jpg")}],
+        _fetch,
+    )
+    assert ok is False
+    assert failed == ["gone"]
+
+
+@pytest.mark.asyncio
+async def test_build_zip_dedupes_entry_names():
+    async def _fetch(url):
+        return b"x"
+
+    sink = io.BytesIO()
+    ok, failed = await build_zip(sink, [_wallpaper(), _wallpaper()], _fetch)
+    assert (ok, failed) == (True, [])
+    with zipfile.ZipFile(sink) as archive:
+        assert archive.namelist() == ["w1.jpg", "w1(1).jpg"]
+
+
+class _BrokenSink:
+    """Sink failing on write, mimicking a full or broken disk."""
+
+    def write(self, data: bytes) -> int:
+        raise OSError("disk full")
+
+    def tell(self) -> int:
+        return 0
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        raise OSError("not seekable")
+
+
+@pytest.mark.asyncio
+async def test_build_zip_broken_sink_returns_false():
+    async def _fetch(url):
+        return b"one"
+
+    ok, failed = await build_zip(_BrokenSink(), [_wallpaper()], _fetch)
+    assert ok is False
+    assert failed == []
+
+
+def test_streams_zip_to_disk_only_for_desktop():
+    from types import SimpleNamespace
+
+    from flet.controls.types import PagePlatform
+
+    from app.interface.flet_app import _streams_zip_to_disk
+
+    desktop = (
+        PagePlatform.WINDOWS,
+        PagePlatform.LINUX,
+        PagePlatform.MACOS,
+    )
+    mobile = (
+        PagePlatform.ANDROID,
+        PagePlatform.ANDROID_TV,
+        PagePlatform.IOS,
+    )
+    for platform in desktop:
+        assert _streams_zip_to_disk(SimpleNamespace(platform=platform))
+    for platform in mobile:
+        assert not _streams_zip_to_disk(SimpleNamespace(platform=platform))
+    # Unknown platforms must take the safe in-memory path.
+    assert not _streams_zip_to_disk(SimpleNamespace(platform=None))
+    assert not _streams_zip_to_disk(SimpleNamespace())
 
 
 def test_clamp_interval():

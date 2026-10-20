@@ -1,6 +1,8 @@
 """Tests for the cross-platform wallpaper service."""
 
 import ctypes
+import os
+import pathlib
 import types
 from io import BytesIO
 
@@ -55,6 +57,12 @@ def _patch_temp(monkeypatch, tmp_path):
     target = tmp_path / "ywallhaven-wallpaper.jpg"
     monkeypatch.setattr(wallpaper, "temp_path", lambda: target)
     return target
+
+
+def _patch_temp_dir(monkeypatch, tmp_path):
+    """Point the wallpaper temp folder at an isolated directory."""
+    monkeypatch.setattr(wallpaper, "_temp_dir", lambda: tmp_path)
+    return tmp_path
 
 
 async def _direct_to_thread(func, *args, **kwargs):
@@ -212,18 +220,93 @@ def test_write_temp_creates_and_overwrites(monkeypatch, tmp_path):
     assert target.read_bytes() == b"second-bytes"
 
 
-def test_cleanup_temp_removes_file(monkeypatch, tmp_path):
-    """cleanup_temp deletes the temp file."""
-    target = _patch_temp(monkeypatch, tmp_path)
-    target.write_bytes(b"data")
+def test_cleanup_temp_removes_files(monkeypatch, tmp_path):
+    """cleanup_temp deletes every wallpaper temp file."""
+    tmp = _patch_temp_dir(monkeypatch, tmp_path)
+    first = tmp / "ywallhaven-wallpaper-111.jpg"
+    second = tmp / "ywallhaven-wallpaper-222.jpg"
+    first.write_bytes(b"a")
+    second.write_bytes(b"b")
     wallpaper.cleanup_temp()
-    assert not target.exists()
+    assert list(tmp.glob("ywallhaven-wallpaper*.jpg")) == []
 
 
 def test_cleanup_temp_missing_file_ok(monkeypatch, tmp_path):
     """cleanup_temp without a file does not raise."""
-    _patch_temp(monkeypatch, tmp_path)
+    _patch_temp_dir(monkeypatch, tmp_path)
     wallpaper.cleanup_temp()
+
+
+# --- local tmp folder next to the app ---
+
+
+def test_temp_path_unique_names():
+    """Each install gets a fresh unique name under ./tmp."""
+    first = wallpaper.temp_path()
+    second = wallpaper.temp_path()
+    assert first != second
+    assert first.parent == pathlib.Path("tmp")
+    assert first.name.startswith("ywallhaven-wallpaper-")
+    assert not first.is_absolute()
+
+
+def test_write_temp_unique_files_per_install(monkeypatch, tmp_path):
+    """tmp/ is created automatically; each write gets its own file."""
+    tmp = _patch_temp_dir(monkeypatch, tmp_path)
+    first = wallpaper.write_temp(b"first")
+    second = wallpaper.write_temp(b"second")
+    assert first != second
+    assert first.parent == tmp
+    assert first.read_bytes() == b"first"
+    assert second.read_bytes() == b"second"
+
+
+def test_prune_keeps_recent_two(monkeypatch, tmp_path):
+    """Old generations are pruned; applied file plus previous stay."""
+    tmp = _patch_temp_dir(monkeypatch, tmp_path)
+    old = tmp / "ywallhaven-wallpaper-1.jpg"
+    prev = tmp / "ywallhaven-wallpaper-2.jpg"
+    applied = tmp / "ywallhaven-wallpaper-3.jpg"
+    for path, stamp in ((old, 1000), (prev, 2000), (applied, 3000)):
+        path.write_bytes(b"x")
+        os.utime(path, (stamp, stamp))
+    wallpaper._prune_temp(applied)
+    assert not old.exists()
+    assert prev.exists()
+    assert applied.exists()
+
+
+def test_cleanup_removes_local_and_legacy_tmp(monkeypatch, tmp_path):
+    """Both app-side temps and the old system-temp file are dropped."""
+    tmp = _patch_temp_dir(monkeypatch, tmp_path)
+    local = tmp / "ywallhaven-wallpaper-5.jpg"
+    local.write_bytes(b"new")
+    legacy_dir = tmp_path / "legacy-temp"
+    legacy_dir.mkdir()
+    legacy = legacy_dir / "ywallhaven-wallpaper.jpg"
+    legacy.write_bytes(b"old")
+    monkeypatch.setattr(wallpaper, "gettempdir", lambda: str(legacy_dir))
+    wallpaper.cleanup_temp()
+    assert not local.exists()
+    assert not legacy.exists()
+
+
+def test_cleanup_tolerates_denied_legacy_file(monkeypatch, tmp_path):
+    """Unremovable temp file does not raise and is skipped."""
+    locked_dir = tmp_path / "locked"
+    locked_dir.mkdir()
+    locked = locked_dir / "ywallhaven-wallpaper-7.jpg"
+    locked.write_bytes(b"locked")
+    locked_dir.chmod(0o500)
+    monkeypatch.setattr(wallpaper, "_temp_dir", lambda: locked_dir)
+    monkeypatch.setattr(
+        wallpaper, "gettempdir", lambda: str(tmp_path / "no-legacy")
+    )
+    try:
+        wallpaper.cleanup_temp()
+    finally:
+        locked_dir.chmod(0o700)
+        locked.unlink(missing_ok=True)
 
 
 # --- apply_wallpaper ---

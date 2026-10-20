@@ -77,3 +77,15 @@ def test_cleanup_never_raises(monkeypatch) -> None:
 
     monkeypatch.setattr(main, "_cleanup_update_files", failing_cleanup)
     main.cleanup()
+
+
+def test_cleanup_calls_wallpaper_cleanup_temp(monkeypatch) -> None:
+    """Shutdown wires the wallpaper temp cleanup in."""
+    called: list = []
+    monkeypatch.setattr(
+        "app.service.wallpaper.cleanup_temp",
+        lambda: called.append(True),
+    )
+    monkeypatch.setattr(main, "_cleanup_update_files", lambda: None)
+    main.cleanup()
+    assert called == [True]

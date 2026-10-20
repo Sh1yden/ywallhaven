@@ -217,6 +217,9 @@ pyrightconfig.json
 # My config
 config.json
 
+# Local wallpaper temp (user data next to the app)
+tmp/
+
 # Local favorites (user data next to the app)
 favorites.json
 favorites.json.tmp

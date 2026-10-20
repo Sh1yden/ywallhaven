@@ -17,8 +17,18 @@
 - **HTTP-клиент:** `httpx` (async)
 - **Валидация/конфигурация:** `Pydantic` + `pydantic-settings`
 - **Пакетный менеджер:** `uv` (`hatchling` под капотом)
-- **Сборка в exe:** `PyInstaller` (Windows)
+- **Сборка:** `PyInstaller` (Windows `exe` + Linux AppImage)
 - **Источник данных:** [Wallhaven API](https://wallhaven.cc/help/api)
+
+## Содержание
+
+- [](#ywallhaven)
+  - [](#зачем-вообще-проект)
+  - [](#🛠-техно-стек)
+  - [](#содержание)
+  - [](#предпоказгалерея)
+  - [](#💜-руководство-пользователя)
+    - [](#🔽-установка-быстрый-старт)
 
 ## Предпоказ/галерея
 
@@ -34,12 +44,13 @@
 ### 🔽 Установка / Быстрый старт
 
 > [!WARNING]
-Убедительная просьба, обычным пользователям. Пожалуйста **НЕ** качайте `pre-release`, он предназначен для разработчиков/тестеров. 
+Убедительная просьба, обычным пользователям. Пожалуйста **НЕ** качайте `pre-release`, он предназначен для разработчиков/тестеров.
 В нём возможны баги и нерабочие функции! Одним словом это **бета/альфа** версии.
 
 #### 🪟 Windows
 
 По плану:
+
 1. Зайдите на страничку релизов: [Releases](https://github.com/Sh1yden/ywallhaven/releases).
 2. Скачайте `ywallhaven_portable-vX.Y.Z.zip` (там внутри папка `ywallhaven` с обоими `exe`). Хотите пофайлово — берите `ywallhaven.exe` + `ywallhaven-updater.exe` отдельно.
 3. По желанию проверьте целостность (сверьте хеш с `SHA256SUMS.txt` из того же релиза):
@@ -48,43 +59,42 @@
 certutil -hashfile ywallhaven.exe SHA256
 ```
 
-4. Распакуйте в любое удобное место и запустите `ywallhaven.exe` 💜.
+1. Распакуйте в любое удобное место и запустите `ywallhaven.exe` 💜.
 
-При первом запуске рядом с exe сами создадутся `config.json` (настройки по умолчанию, см. [`config.example.json`](config.example.json)), папка `logs` (логи) и папка `themes` (свои темы + гайд с примерами внутри).
+При первом запуске рядом сами создадутся `config.json` (настройки по умолчанию, см. [`config.example.json`](config.example.json)), `favorites.json` (Избранное и коллекции), папка `logs` (логи) и папка `themes` (свои темы + гайд с примерами внутри).
 
 #### 🐧 Linux
 
 1. Зайдите на страничку релизов: [Releases](https://github.com/Sh1yden/ywallhaven/releases).
 2. Скачайте `YWallhaven-vX.Y.Z-x86_64.AppImage`.
-3. Скиньте в любое удобное вам место в домашней директории(всё кроме системных папок).
-4. В консоли выполните, так вы сделаете файл исполнительным:
+3. Скиньте в любое удобное вам место в домашней директории (всё кроме системных папок).
+4. Сделайте файл исполнительным и запустите (или просто запустите через файловый менеджер):
 
 ```shell
-chmod +x YWallhaven-v0.14.1-x86_64.AppImage
-```
-
-4. Запустите либо через `проводник`, либо через:
-
-```shell
-./YWallhaven-v0.14.1-x86_64.AppImage
+chmod +x YWallhaven-vX.Y.Z-x86_64.AppImage
+./YWallhaven-vX.Y.Z-x86_64.AppImage
 ```
 
 ### 🖱 Повседневное пользование
 
-- **Поиск:** вбейте запрос слева, настройте фильтры (категории, `purity`, сортировка, разрешение) и жмите поиск. По тегу можно искать кликом прямо по тегу под превью — запрос подставится сам.
+- **Поиск:** вбейте запрос слева, настройте фильтры (категории, `purity`, сортировка, разрешение) и жмите поиск. По тегу можно искать кликом прямо по тегу под превью, по цвету — кликом по кружку цвета там же — фильтр подставится сам.
 - **Превью:** клик по картинке в галлерее по середине показывает свойства и теги справа. Двойной клик — сразу диалог скачивания.
 - **Скачивание:** кнопка `Download` → выбор разрешения (`Original` или пресет под ваш экран) → диалог сохранения.
 - **Обои в один клик:** кнопочка с обоями рядом с `Download` ставит текущий арт фоном рабочего стола.
 - **Фулскрин:** клик по превью → кнопки `←/→` листают, колесо/кнопки `−/+` зумируют (зум едет к курсору), тап по фону при зуме не закрывает (защита от микскликов).
 - **Темы:** Settings → Theme (9 встроенных, включая Kanagawa). Свою — киньте `themes/my_theme.json` или кнопкой `Import` в настройках.
+- **Избранное и коллекции:** сердечко на миниатюре — в Избранное в один клик, `+` — пикер коллекций (где обои уже лежат, помечено галочкой). Сердечко в шапке открывает режим коллекций: плитки с обложками, создание, свойства, скачивание целиком (ZIP или папкой), слайдшоу. В открытой коллекции крестик убирает обои, long-press включает множественный выбор (удалить / скачать / перенести / слайдшоу).
 
 ### ♻ Автообновление
 
 Приложение само проверяет релизы при старте (и по кнопке `Check for updates` в настройках). Порядок такой:
+
 1. Предложит новую версию в диалоге.
-2. Скачает `ywallhaven.exe` с прогресс-баром и проверит SHA-256.
-3. Покажет штатный UAC-запрос Windows (это нормально — помощник обновляет exe в папке установки) → заменит файл и перезапустит приложение.
+2. Скачает файл релиза с прогресс-баром и проверит SHA-256.
+3. Windows: покажет штатный UAC-запрос (это нормально — помощник обновляет exe в папке установки) → заменит файл и перезапустит приложение.
 4. Отклонили UAC — ничего страшного, останетесь на текущей версии, предложит снова позже.
+
+На Linux всё тихо: помощник вшит в `AppImage`, та же проверка SHA-256, замена файла и перезапуск без запросов.
 
 ### ❓ Частые вопросы
 
@@ -105,8 +115,8 @@ chmod +x YWallhaven-v0.14.1-x86_64.AppImage
 4. Скопируйте `API Key` и вставьте его в приложение(поле апи ключа находиться в разделе настроек).
 5. Спокойно пользуйтесь без ограничений 💜.
 
-Если вы боитесь за приватность ваших данных, а именно про кражу вашего апи ключа. 
-Он храниться локально в `config.json`. Даже если его украдут, 
+Если вы боитесь за приватность ваших данных, а именно про кражу вашего апи ключа.
+Он храниться локально в `config.json`. Даже если его украдут,
 вы можете просто перегенерировать его пользуясь пунктом 3 в инструкции выше.
 
 ## 💻 Разделы для разработчиков
@@ -120,34 +130,37 @@ git clone "https://github.com/Sh1yden/ywallhaven.git"
 cd ywallhaven
 ```
 
-2. Синхронизируйте окружение через `uv`:
+1. Синхронизируйте окружение через `uv`:
 
 ```shell
 uv sync
-``` 
+```
 
-3. Запуск
+1. Запуск
 
 ```shell
 uv run app/main.py
 ```
 
-### 📦 Сборка в exe(Windows)
+### 📦 Сборка
 
-Основной путь - CI: пушится тег вида `vX.Y.Z`, GitHub Actions на `windows-latest` собирает оба exe и сам публикует релиз с ними:
+Основной путь - CI: пушится тег вида `vX.Y.Z`, GitHub Actions собирает обе платформы и сам публикует релиз:
 
-- тег `v0.7.0` → обычный Release;
-- тег `v0.7.0-rc1` / `-beta` / `-alpha` → pre-release.
+- джоба `build` (`windows-latest`) — пара `exe`;
+- джоба `build-linux` (`ubuntu-22.04`) — AppImage;
+- тег `v0.7.0` → обычный Release;
+- тег `v0.7.0-rc1` / `-beta` / `-alpha` → pre-release.
 
-В релиз всегда попадают четыре файла: `ywallhaven.exe` (основное приложение), `ywallhaven-updater.exe` (помощник автообновления), `ywallhaven_portable-vX.Y.Z.zip` (папка `ywallhaven` с обоими exe) и `SHA256SUMS.txt` (контрольные суммы).
+В релиз всегда попадают пять файлов: `ywallhaven.exe` (основное приложение, Windows), `ywallhaven-updater.exe` (помощник автообновления, Windows), `ywallhaven_portable-vX.Y.Z.zip` (папка `ywallhaven` с обоими exe), `YWallhaven-vX.Y.Z-x86_64.AppImage` (основное приложение, Linux) и `SHA256SUMS.txt` (контрольные суммы).
 
-Локальная сборка (запасной вариант, только на Windows, т.к. PyInstaller не умеет кросс-компиляцию):
+Локальная сборка (PyInstaller не умеет кросс-компиляцию — собирайте на целевой ОС):
 
 ```shell
-uv run python scripts/build.py
+uv run python scripts/build.py --target win    # пара exe в dist/
+uv run python scripts/build.py --target linux  # dist/ywallhaven/ + хелпер
 ```
 
-Скрипт определяет версию из git-тегов (hatch-vcs), генерирует `app/core/_version.py` и version-info, после чего собирает оба исполняемых файла в `dist/`.
+Скрипт определяет версию из git-тегов (hatch-vcs) и генерирует `app/core/_version.py` (+ version-info и `.ico` для Windows), после чего запускает PyInstaller по спекам. Linux-папка упаковывается в AppImage через `scripts/make_appdir.py` и `appimagetool` (как в CI).
 
 ### ♻ Система автообновления
 
@@ -162,7 +175,7 @@ uv run python scripts/build.py
 
 #### 🐧 Linux
 
-Тот же порядок работы, только `updater` вшит в `appimage`!
+Тот же порядок, но без UAC: хелпер вшит в AppImage, цель замены — сам файл `$APPIMAGE`, после замены `chmod +x` и рестарт.
 
 #### Config
 
@@ -194,12 +207,14 @@ uv run python scripts/build.py
 
 `seed` обязателен (генерирует M3 палитру), `colors` опционально перетирает любые токены `ColorScheme` (см. `themes/README.md` и `app/interface/themes/schema.py`). Легаси `"dark"/"light"` в `config.json` мигрируют на `dark_default/light_default`.
 
-##### Более подробно в [THEMES README](themes/README.md).
+##### Более подробно в [THEMES README](themes/README.md)
+
+### Система коллекций
 
 ### 🧪 Тесты
 
 Находяться в директории [`tests`](tests).
-Покрытие на данный момент: `74%`.
+Покрытие на данный момент: `73%`.
 
 ### 📑 Структура конфига
 
@@ -209,7 +224,7 @@ uv run python scripts/build.py
 {
     "MODE": "dev or prod",
     "LOG_LVL": "DEBUG, WARNING, INFO, and etc.",
-    "PORT": 8550,
+    "PORT": 9864,
     "APIK": "YOUR_WALLHAVEN_API_KEY",
     "CHECK_UPDATES": true,
     "CHECK_PRERELEASES": false,
@@ -217,9 +232,9 @@ uv run python scripts/build.py
 }
 ```
 
-- `MODE` - может быть либо `dev`, либо `prod`. 
+- `MODE` - может быть либо `dev`, либо `prod`.
 - `LOG_LVL` - выбор режима логов.
-- `PORT` - порт на котором запуститься веб приложение, если выбран такой способ запуска.
+- `PORT` - порт локального сервера Flet (окно приложения).
 - `APIK` - ключ от сайта: [Wallhaven](https://wallhaven.cc/). Нужен для снятия ограничений на запросы + доступ к `sketchy`, `nsfw` постам.
 - `CHECK_UPDATES` - проверять обновления при старте (по умолчанию `true`);
 - `CHECK_PRERELEASES` - предлагать пре-релизы (по умолчанию `false`).
@@ -230,19 +245,21 @@ uv run python scripts/build.py
 - `app` - папка всего приложения.
   - `core` - ядро проекта: конфигурация (`config.py`), логирование (`logger.py` + `logger_config.py`), обработка ошибок (`error_handling.py`), реестр закрываемых ресурсов (`resources.py`), определение версии (`version.py`).
   - `interface` - весь UI на `Flet`.
-    - `bus.py` - шина событий `page.pubsub` между панелями (7 топиков `ywallhaven/*`).
-    - `components` - панели интерфейса: `left_panel.py` (поиск, фильтры), `middle_panel.py` (сетка), `right_panel.py` (превью), `settings.py` (настройки + темы), `update_dialog.py` (диалог автообновления).
+    - `bus.py` - шина событий `page.pubsub` между панелями (22 топика `ywallhaven/*`).
+    - `components` - панели интерфейса: `left_panel.py` (поиск, фильтры), `middle_panel.py` (сетка), `right_panel.py` (превью), `collections_panel.py` (сетка коллекций и их содержимое), `collection_settings.py` (свойства коллекции, настройки слайдшоу), `settings.py` (настройки + темы), `update_dialog.py` (диалог автообновления).
     - `themes` - `schema.py`/`builtin.py`/`loader.py` - реестр тем, Kanagawa из `rebelot/kanagawa.nvim`, гибрид `seed+colors`.
+    - `client_env.py` - чистка `LD_LIBRARY_PATH` для внешнего Flet-клиента в Linux-сборке.
     - `flet_app.py` - сборка панелей в единый layout.
   - `schemas` - `pydantic`-схемы: конфигурации (`config_schema.py`), Wallhaven API (`wallhaven_schema.py`), апдейтера (`updater_schema.py`).
-  - `service` - бизнес-логика: `wallhaven_api.py` (клиент Wallhaven API), `updater.py` (автообновление), `wallpaper.py` (установка обоев на Windows).
+  - `service` - бизнес-логика: `wallhaven_api.py` (клиент Wallhaven API), `updater.py` (автообновление), `wallpaper.py` (установка обоев: Windows/Linux-бэкенды), `favorites.py` (хранилище Избранного и коллекций), `collection_io.py` (скачивание коллекции в ZIP/папку), `slideshow.py` (движок слайдшоу).
   - `main.py` - точка входа: режим приложения, логирование, запуск Flet.
 - `updater/` - отдельный executable для автообновления (`main.py`).
 - `docs/` - документация и ассеты: `docs/assets/` (иконки `icon.{png,svg,ico}`).
 - `themes/` - пользовательские темы `*.json` + примеры `example_*.json` (см. `themes/README.md`).
-- `scripts/` - `build.py` (сборка exe: версия, иконка, PyInstaller), `package_release.py` (zip + `SHA256SUMS.txt`), `smoke_wallhaven.py` (живой чек API без моков).
+- `scripts/` - `build.py` (сборка win/linux по `--target`: версия, иконка, PyInstaller), `make_appdir.py` (AppDir для AppImage), `package_release.py` (zip + `SHA256SUMS.txt`), `smoke_wallhaven.py` (живой чек API без моков).
 - `tests/` - pytest-тесты.
-- `ywallhaven.spec` и `ywallhaven-updater.spec` - PyInstaller-спеки для сборки обоих exe.
+- `ywallhaven*.spec` - PyInstaller-спеки: Windows (`ywallhaven.spec`, `ywallhaven-updater.spec`) и Linux (`ywallhaven-linux.spec`, `ywallhaven-updater-linux.spec`).
+- `favorites.json` - локальное хранилище Избранного и коллекций (создаётся приложением).
 - `run.py` - точка запуска/сборки приложения.
 - `config.example.json` - пример конфигурации.
 - `pyproject.toml` и `uv.lock` - конфигурация проекта и зависимости.
@@ -257,6 +274,8 @@ uv run python scripts/build.py
 ## Лицензия
 
 Этот проект распространяется под лицензией MIT. Подробности в файле [LICENSE](LICENSE).
+
+## Правила внесения изменений в код
 
 ## 💜 Вопросы, контакты / FAQ
 

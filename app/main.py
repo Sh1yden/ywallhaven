@@ -75,6 +75,9 @@ def cleanup():
     try:
         _lg.debug("Running cleaner: releasing resources... 8)")
 
+        from app.service.wallpaper import cleanup_temp
+
+        cleanup_temp()
         _lg.debug("Cleaning up leftover update files...")
         _cleanup_update_files()
         _trim_updater_log()

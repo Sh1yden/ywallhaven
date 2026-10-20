@@ -7,10 +7,13 @@ raise — they are collected and reported at the end.
 """
 
 import asyncio
-import io
 import zipfile
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, BinaryIO, Callable, Dict, List
+
+from app.core import get_logger
+
+_lg = get_logger()
 
 
 def unique_name(taken: set, base: str) -> str:
@@ -90,38 +93,93 @@ async def resolve_bytes(
 
 
 async def build_zip(
+    sink: BinaryIO,
     wallpapers: List[Dict[str, Any]],
     fetch: Callable[[str], Awaitable[bytes | None]],
     progress: Callable[[int, int], None] | None = None,
-) -> tuple[bytes | None, List[str]]:
-    """Pack wallpapers into a zip archive in memory.
+) -> tuple[bool, List[str]]:
+    """Pack wallpapers into a zip archive streamed to ``sink``.
+
+    The archive is written entry by entry straight into the sink, so
+    the whole zip never sits in memory: desktop passes an open file,
+    mobile/web pass a ``BytesIO`` whose bytes go to the file picker.
+    Local wallpapers are added from disk without loading them, remote
+    ones travel through the API fetcher. The sink must be seekable
+    (zipfile patches headers) and stays open — its owner decides
+    whether to keep or delete the result.
 
     Args:
+        sink: Seekable binary stream receiving the archive bytes.
         wallpapers: Wallpaper dicts to pack.
         fetch: Async downloader for HTTP urls.
         progress: Optional callback receiving (done, total).
 
     Returns:
-        (zip bytes or None when empty/all failed, failed ids).
+        (ok, failed ids); ok is False when nothing was packed or the
+        stream failed, so the caller drops the (partial) target.
     """
     taken: set = set()
     failed: List[str] = []
-    buffer = io.BytesIO()
     done = 0
+    packed = 0
     total = len(wallpapers)
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for position, wallpaper in enumerate(wallpapers):
-            data = await resolve_bytes(wallpaper, fetch)
-            done += 1
-            if progress is not None:
-                progress(done, total)
-            if not data:
-                failed.append(str(wallpaper.get("id", "?")))
-                continue
-            archive.writestr(
-                unique_name(taken, display_name(wallpaper, position)),
-                data,
-            )
-    if not taken:
-        return None, failed
-    return buffer.getvalue(), failed
+
+    def _add_bytes(archive: zipfile.ZipFile, data: bytes, name: str) -> None:
+        archive.writestr(name, data)
+
+    def _add_local(
+        archive: zipfile.ZipFile, source: Path, name: str
+    ) -> None:
+        archive.write(source, arcname=name)
+
+    try:
+        with zipfile.ZipFile(sink, "w", zipfile.ZIP_DEFLATED) as archive:
+            for position, wallpaper in enumerate(wallpapers):
+                path = str(wallpaper.get("path", ""))
+                written = False
+                if path.startswith("http"):
+                    data = await resolve_bytes(wallpaper, fetch)
+                    if data:
+                        name = unique_name(
+                            taken, display_name(wallpaper, position)
+                        )
+                        # Compression runs in a worker thread, so the
+                        # event loop keeps serving UI updates.
+                        await asyncio.to_thread(
+                            _add_bytes, archive, data, name
+                        )
+                        written = True
+                elif path:
+                    # Local files stream from disk: zipfile reads them
+                    # itself, so no full copy ever enters memory.
+                    source = Path(path)
+                    if source.is_file():
+                        name = unique_name(
+                            taken, display_name(wallpaper, position)
+                        )
+                        try:
+                            await asyncio.to_thread(
+                                _add_local, archive, source, name
+                            )
+                            written = True
+                        except (
+                            FileNotFoundError,
+                            PermissionError,
+                            IsADirectoryError,
+                        ) as e:
+                            # Failed before any bytes were archived.
+                            _lg.debug(
+                                f"Skipped local wallpaper "
+                                f"{source}: {e}."
+                            )
+                if written:
+                    packed += 1
+                else:
+                    failed.append(str(wallpaper.get("id", "?")))
+                done += 1
+                if progress is not None:
+                    progress(done, total)
+    except Exception as e:
+        _lg.error(f"Failed to build zip archive: {e}.")
+        return False, failed
+    return packed > 0, failed
