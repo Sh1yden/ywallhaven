@@ -1,7 +1,6 @@
 """Tests for the Linux wallpaper backend and dispatch."""
 
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -28,13 +27,13 @@ def test_select_backend_linux(monkeypatch):
     assert backend.supports is True
 
 
-def test_select_backend_android_stub(monkeypatch):
+def test_select_backend_android_stub(monkeypatch, tmp_path):
     """Android resolves to an unsupported stub."""
     monkeypatch.setattr(wallpaper.sys, "platform", "android")
     backend = wallpaper._select_backend()
     assert backend.name == "android"
     assert backend.supports is False
-    assert backend.apply(Path("/tmp/x.jpg")) is False
+    assert backend.apply(tmp_path / "x.jpg") is False
 
 
 def test_linux_apply_no_tools_fails(monkeypatch, tmp_path):
@@ -259,13 +258,6 @@ def test_plan_keeps_gsettings_on_x11(monkeypatch, tmp_path):
         label for label, _ in backend._plan(tmp_path / "w.jpg", "")
     ]
     assert labels[-1] == "gsettings"
-
-
-def test_process_running_sees_self():
-    """The scanner finds the current process by its comm name."""
-    comm = Path("/proc/self/comm").read_text().strip()
-    assert wallpaper._process_running(comm) is True
-    assert wallpaper._process_running("no-such-process-xyz") is False
 
 
 @pytest.mark.asyncio

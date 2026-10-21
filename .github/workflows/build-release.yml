@@ -9,7 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    uses: ./.github/workflows/tests.yml
+
   build:
+    needs: test
     runs-on: windows-latest
 
     steps:
@@ -40,6 +44,7 @@ jobs:
             dist/ywallhaven_portable-${{ github.ref_name }}.zip
 
   build-linux:
+    needs: test
     runs-on: ubuntu-22.04
 
     steps:

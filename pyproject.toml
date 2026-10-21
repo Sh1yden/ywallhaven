@@ -37,3 +37,9 @@ local_scheme = "no-local-version"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+markers = [
+    "native: requires a real target OS environment",
+    "native_linux: Linux-only native test",
+    "native_win: Windows-only native test",
+    "native_android: Android-only native test (reserved)",
+]

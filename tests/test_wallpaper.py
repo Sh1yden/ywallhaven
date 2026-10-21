@@ -297,16 +297,23 @@ def test_cleanup_tolerates_denied_legacy_file(monkeypatch, tmp_path):
     locked_dir.mkdir()
     locked = locked_dir / "ywallhaven-wallpaper-7.jpg"
     locked.write_bytes(b"locked")
-    locked_dir.chmod(0o500)
     monkeypatch.setattr(wallpaper, "_temp_dir", lambda: locked_dir)
     monkeypatch.setattr(
         wallpaper, "gettempdir", lambda: str(tmp_path / "no-legacy")
     )
-    try:
-        wallpaper.cleanup_temp()
-    finally:
-        locked_dir.chmod(0o700)
-        locked.unlink(missing_ok=True)
+
+    original_unlink = pathlib.Path.unlink
+
+    def _deny_locked(self, *args, **kwargs):
+        if self == locked:
+            raise PermissionError("denied")
+        return original_unlink(self, *args, **kwargs)
+
+    monkeypatch.setattr(pathlib.Path, "unlink", _deny_locked)
+
+    wallpaper.cleanup_temp()
+
+    assert locked.is_file()
 
 
 # --- apply_wallpaper ---

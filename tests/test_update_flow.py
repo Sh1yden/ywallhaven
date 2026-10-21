@@ -7,7 +7,6 @@ update pipeline finishes.
 
 import asyncio
 import json
-from pathlib import Path
 
 import pytest
 
@@ -129,7 +128,9 @@ async def test_dialog_close_releases_client(fake_updater_factory) -> None:
     assert updater.closed, "dialog dismissal must close the client"
 
 
-def test_install_closes_client_before_destroy(fake_updater_factory) -> None:
+def test_install_closes_client_before_destroy(
+    fake_updater_factory, tmp_path
+) -> None:
     """The download pipeline must release the client before destroying
     the window."""
 
@@ -155,7 +156,7 @@ def test_install_closes_client_before_destroy(fake_updater_factory) -> None:
         })()
 
         async def fake_download(release, *, progress=None):
-            return Path("/tmp/ywallhaven-update-test.exe")
+            return tmp_path / "ywallhaven-update-test.exe"
 
         updater.download_asset = fake_download
         updater.find_asset = lambda release: release.assets[0]

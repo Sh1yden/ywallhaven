@@ -168,6 +168,7 @@ For tests, see the [Tests](#-tests) section.
 
 The main path is CI: a tag like `vX.Y.Z` is pushed, GitHub Actions builds both platforms and publishes the release itself:
 
+- job `test` (`ubuntu-latest` + `windows-latest`) — shared and native tests; a failure blocks the build and release;
 - job `build` (`windows-latest`) — the `exe` pair;
 - job `build-linux` (`ubuntu-22.04`) — the AppImage;
 - job `release` — publishes the assets;
@@ -258,13 +259,18 @@ The store is `favorites.json` next to `config.json`: wallpaper metadata only, no
 
 ### 🧪 Tests
 
-Tests live in the [`tests`](tests) directory. The latest run: `343 passed, 1 skipped`.
+Tests live in the [`tests`](tests) directory. The latest local run (Linux): `346 passed, 5 skipped`.
+
+Shared logic and real-environment checks are split by markers:
 
 ```shell
-uv run pytest
+uv run pytest -m "not native"   # shared logic, both OSes
+uv run pytest -m native_linux   # real Linux environment
+uv run pytest -m native_win     # real Windows environment
+uv run pytest                   # everything available on the current OS
 ```
 
-Coverage of the application code (`app/`, `updater/`, `scripts/`) at the time of checking — `73%`:
+Coverage of the application code (`app/`, `updater/`, `scripts/`) at the time of checking — `71%`:
 
 ```shell
 uv run pytest --cov=app --cov=updater --cov=scripts --cov-report=term-missing
@@ -311,8 +317,9 @@ uv run pytest --cov=app --cov=updater --cov=scripts --cov-report=term-missing
 - `docs/` — docs and assets: `docs/assets/` (`icon.png`, `icon.svg`; `icon.ico` is generated at build time).
 - `themes/` — custom themes `*.json` + inactive `example_*.json.example` samples (see `themes/README.en.md`).
 - `scripts/` — `build.py` (win/linux build via `--target`: version, icon, PyInstaller), `make_appdir.py` (AppDir for the AppImage), `package_release.py` (zip + `SHA256SUMS.txt`), `smoke_wallhaven.py` (live API check with no mocks).
-- `tests/` — pytest tests.
+- `tests/` — shared pytest tests; `tests/native/` — native OS checks (`native_linux`, `native_win`).
 - `ywallhaven*.spec` — PyInstaller specs: Windows (`ywallhaven.spec`, `ywallhaven-updater.spec`) and Linux (`ywallhaven-linux.spec`, `ywallhaven-updater-linux.spec`).
+- `.github/workflows/tests.yml` — tests on push/PR and reusable entry for the release workflow.
 - `.github/workflows/build-release.yml` — CI build and release publishing.
 - `run.py` — PyInstaller spec shim that calls `app.main.main`; for running from sources use `uv run app/main.py`.
 - `config.example.json` — commented config cheat sheet (not strict JSON).

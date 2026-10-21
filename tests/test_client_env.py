@@ -42,6 +42,11 @@ def test_patch_skipped_when_not_frozen(monkeypatch):
     assert patch_flet_client_env() is False
 
 
+@pytest.mark.native
+@pytest.mark.native_linux
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux-only native test"
+)
 def test_patch_scrubs_real_seam(monkeypatch):
     import flet_desktop
 

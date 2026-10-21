@@ -4,6 +4,8 @@ import os
 import stat
 import sys
 
+import pytest
+
 sys.path.insert(0, "scripts")
 
 from make_appdir import build_appdir, validate_desktop
@@ -42,7 +44,6 @@ def test_build_appdir_layout(tmp_path):
 
     appdir = result["appdir"]
     assert (appdir / "AppRun").is_file()
-    assert os.access(appdir / "AppRun", os.X_OK)
     assert result["desktop"].read_text(
         encoding="utf-8"
     ).startswith("[Desktop Entry]")
@@ -50,6 +51,20 @@ def test_build_appdir_layout(tmp_path):
     assert result["main"].read_bytes() == b"elf-main"
     assert result["helper"].read_bytes() == b"elf-helper"
     assert (appdir / "usr" / "bin" / "ywallhaven").is_dir()
+
+
+@pytest.mark.native
+@pytest.mark.native_linux
+@pytest.mark.skipif(
+    sys.platform != "linux", reason="Linux-only native test"
+)
+def test_build_appdir_marks_executables(tmp_path):
+    """AppRun and bundled binaries keep POSIX exec bits."""
+    dist, icon = _fake_dist(tmp_path)
+
+    result = build_appdir(dist=dist, icon_png=icon)
+
+    assert os.access(result["apprun"], os.X_OK)
     for binary in (result["main"], result["helper"]):
         assert binary.stat().st_mode & stat.S_IXUSR
 
@@ -77,8 +92,6 @@ def test_build_appdir_desktop_has_required_keys(tmp_path):
 
 def test_build_appdir_missing_build_fails(tmp_path):
     """Missing PyInstaller output fails with a clear error."""
-    import pytest
-
     dist = tmp_path / "dist"
     dist.mkdir()
     icon = tmp_path / "icon.png"
@@ -90,8 +103,6 @@ def test_build_appdir_missing_build_fails(tmp_path):
 
 def test_build_appdir_missing_icon_fails(tmp_path):
     """Missing icon fails instead of staging a broken AppDir."""
-    import pytest
-
     dist, _icon = _fake_dist(tmp_path)
 
     with pytest.raises(FileNotFoundError):

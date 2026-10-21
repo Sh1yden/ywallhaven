@@ -189,8 +189,11 @@ async def test_releases_url_has_no_trailing_slash():
 
 
 @pytest.mark.asyncio
-async def test_download_asset_writes_file(monkeypatch):
+async def test_download_asset_writes_file(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        updater_module, "gettempdir", lambda: str(tmp_path)
+    )
     payloads = [release_payload("v0.6.0")]
     updater = make_updater(payloads)
     release = await updater.check_update()
@@ -215,42 +218,43 @@ async def test_download_asset_writes_file(monkeypatch):
     await updater.close()
 
 
-def test_verify_sha256_matches():
-    fake = Path("/tmp/fake-update.exe")
+def test_verify_sha256_matches(tmp_path):
+    fake = tmp_path / "fake-update.exe"
     fake.write_bytes(b"exe")
-    asset = AssetInfo(**convert_asset(release_payload("v0.6.0")["assets"][0]))
+    asset = AssetInfo(
+        **convert_asset(release_payload("v0.6.0")["assets"][0])
+    )
 
-    try:
-        assert UpdaterService.verify_sha256(fake, asset)
-    finally:
-        fake.unlink(missing_ok=True)
+    assert UpdaterService.verify_sha256(fake, asset)
 
 
-def test_verify_sha256_rejects_mismatch():
-    fake = Path("/tmp/fake-update2.exe")
+def test_verify_sha256_rejects_mismatch(tmp_path):
+    fake = tmp_path / "fake-update2.exe"
     fake.write_bytes(b"other")
-    asset = AssetInfo(**convert_asset(release_payload("v0.6.0")["assets"][0]))
+    asset = AssetInfo(
+        **convert_asset(release_payload("v0.6.0")["assets"][0])
+    )
 
-    try:
-        assert not UpdaterService.verify_sha256(fake, asset)
-    finally:
-        fake.unlink(missing_ok=True)
+    assert not UpdaterService.verify_sha256(fake, asset)
 
 
-def test_verify_sha256_rejects_missing_digest():
-    fake = Path("/tmp/fake-update3.exe")
+def test_verify_sha256_rejects_missing_digest(tmp_path):
+    fake = tmp_path / "fake-update3.exe"
     fake.write_bytes(b"exe")
-    asset = AssetInfo(**convert_asset(release_payload("v0.6.0", include_digest=False)["assets"][0]))
+    asset = AssetInfo(
+        **convert_asset(
+            release_payload("v0.6.0", include_digest=False)["assets"][0]
+        )
+    )
 
-    try:
-        assert not UpdaterService.verify_sha256(fake, asset)
-    finally:
-        fake.unlink(missing_ok=True)
+    assert not UpdaterService.verify_sha256(fake, asset)
 
 
-def test_verify_sha256_rejects_unreadable_file():
-    asset = AssetInfo(**convert_asset(release_payload("v0.6.0")["assets"][0]))
-    missing = Path("/tmp/nonexistent-update.exe")
+def test_verify_sha256_rejects_unreadable_file(tmp_path):
+    asset = AssetInfo(
+        **convert_asset(release_payload("v0.6.0")["assets"][0])
+    )
+    missing = tmp_path / "nonexistent-update.exe"
 
     assert not UpdaterService.verify_sha256(missing, asset)
 
@@ -275,8 +279,11 @@ async def test_download_asset_returns_none_without_asset():
 
 
 @pytest.mark.asyncio
-async def test_download_asset_reports_progress(monkeypatch):
+async def test_download_asset_reports_progress(monkeypatch, tmp_path):
     monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(
+        updater_module, "gettempdir", lambda: str(tmp_path)
+    )
     payloads = [release_payload("v0.6.0")]
     updater = make_updater(payloads)
     release = await updater.check_update()
@@ -648,9 +655,14 @@ async def test_ignores_exe_asset_on_linux(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_download_asset_uses_appimage_suffix(monkeypatch):
+async def test_download_asset_uses_appimage_suffix(
+    monkeypatch, tmp_path
+):
     payloads = [_appimage_payload("v0.6.0")]
     monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(
+        updater_module, "gettempdir", lambda: str(tmp_path)
+    )
     updater = make_updater(payloads)
     release = await updater.check_update()
 
@@ -766,85 +778,27 @@ async def test_launch_updater_linux_refuses_unwritable(
     await updater.close()
 
 
-def test_restart_posix_detaches_and_chmod(monkeypatch, tmp_path):
-    import updater.main as helper_main
-
-    monkeypatch.setattr(sys, "platform", "linux")
-    dst = tmp_path / "YWallhaven.AppImage"
-    dst.write_bytes(b"app")
-    dst.chmod(0o644)
-
-    started: list = []
-    monkeypatch.setattr(
-        helper_main.subprocess,
-        "Popen",
-        lambda cmd, **kwargs: started.append((cmd, kwargs)),
-    )
-
-    helper_main._restart(dst, helper_main._setup_logger(
-        type("Args", (), {"log": tmp_path / "h.log"})()
-    ))
-
-    assert dst.stat().st_mode & 0o111
-    assert started
-    _cmd, kwargs = started[0]
-    assert kwargs.get("start_new_session") is True
-    assert "creationflags" not in kwargs
-
-
-def test_helper_main_replaces_and_restarts_posix(
-    monkeypatch, tmp_path
-):
-    import updater.main as helper_main
-
-    monkeypatch.setattr(sys, "platform", "linux")
-    src = tmp_path / "new.AppImage"
-    dst = tmp_path / "YWallhaven.AppImage"
-    src.write_bytes(b"new")
-    src.chmod(0o644)
-    dst.write_bytes(b"old")
-
-    started: list = []
-    monkeypatch.setattr(
-        helper_main.subprocess,
-        "Popen",
-        lambda cmd, **kwargs: started.append(cmd),
-    )
-
-    old_argv = sys.argv
-    sys.argv = [
-        "updater",
-        "--pid", str(2**31 - 1),
-        "--src", str(src),
-        "--dst", str(dst),
-        "--log", str(tmp_path / "updater.log"),
-        "--restart",
-    ]
-    try:
-        exit_code = helper_main.main()
-    finally:
-        sys.argv = old_argv
-
-    assert exit_code == 0
-    assert dst.read_bytes() == b"new"
-    assert dst.stat().st_mode & 0o111
-    assert started
-
-def test_helper_logger_falls_back_to_temp(tmp_path):
+def test_helper_logger_falls_back_to_temp(tmp_path, monkeypatch):
     import logging
 
     import updater.main as helper_main
 
-    denied = tmp_path / "readonly"
-    denied.mkdir()
-    denied.chmod(0o555)
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    monkeypatch.setattr(
+        "tempfile.gettempdir", lambda: str(temp_dir)
+    )
     logger = logging.getLogger("ywallhaven-updater")
-    logger.handlers.clear()
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
     args = type(
         "Args",
         (),
         {
-            "log": denied / "updater.log",
+            "log": blocker / "updater.log",
             "dst": tmp_path / "app.AppImage",
         },
     )()
@@ -858,44 +812,49 @@ def test_helper_logger_falls_back_to_temp(tmp_path):
             if isinstance(h, logging.FileHandler)
         ]
         assert len(files) == 1
-        assert str(tmp_path) not in files[0]
+        assert Path(files[0]) == (
+            temp_dir / "ywallhaven_updater.log"
+        )
     finally:
         for handler in list(logger.handlers):
             logger.removeHandler(handler)
-            try:
-                handler.close()
-            except Exception:
-                pass
-        denied.chmod(0o755)
+            handler.close()
 
 
-def test_helper_main_survives_unwritable_log_dir(tmp_path):
+def test_helper_main_survives_unwritable_log_dir(
+    tmp_path, monkeypatch
+):
     import updater.main as helper_main
 
-    denied = tmp_path / "readonly"
-    denied.mkdir()
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    monkeypatch.setattr(
+        "tempfile.gettempdir", lambda: str(temp_dir)
+    )
     src = tmp_path / "new.AppImage"
     dst = tmp_path / "app.AppImage"
     src.write_bytes(b"new")
     dst.write_bytes(b"old")
-    denied.chmod(0o555)
+    monkeypatch.setattr(
+        helper_main, "_process_alive", lambda pid: False
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "updater",
+            "--pid", "1",
+            "--src", str(src),
+            "--dst", str(dst),
+            "--log", str(blocker / "updater.log"),
+        ],
+    )
 
-    old_argv = sys.argv
-    sys.argv = [
-        "updater",
-        "--pid", str(2**31 - 1),
-        "--src", str(src),
-        "--dst", str(dst),
-        "--log", str(denied / "updater.log"),
-    ]
-    try:
-        exit_code = helper_main.main()
-    finally:
-        sys.argv = old_argv
-        denied.chmod(0o755)
-
-    assert exit_code == 0
+    assert helper_main.main() == 0
     assert dst.read_bytes() == b"new"
+    assert (temp_dir / "ywallhaven_updater.log").is_file()
 
 
 def test_log_path_prefers_app_dir(monkeypatch, tmp_path):

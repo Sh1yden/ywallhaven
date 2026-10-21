@@ -168,6 +168,7 @@ uv run app/main.py
 
 Основной путь — CI: пушится тег вида `vX.Y.Z`, GitHub Actions собирает обе платформы и сам публикует релиз:
 
+- джоба `test` (`ubuntu-latest` + `windows-latest`) — общий suite и native-тесты; её падение блокирует сборку и релиз;
 - джоба `build` (`windows-latest`) — пара `exe`;
 - джоба `build-linux` (`ubuntu-22.04`) — AppImage;
 - джоба `release` — публикация ассетов;
@@ -258,13 +259,18 @@ ARCH=x86_64 APPIMAGE_EXTRACT_AND_RUN=1 ./appimagetool \
 
 ### 🧪 Тесты
 
-Тесты находятся в директории [`tests`](tests). На последнем прогоне: `343 passed, 1 skipped`.
+Тесты находятся в директории [`tests`](tests). На последнем локальном прогоне (Linux): `346 passed, 5 skipped`.
+
+Общая логика и проверки реального окружения разделены маркерами:
 
 ```shell
-uv run pytest
+uv run pytest -m "not native"   # общая логика, обе ОС
+uv run pytest -m native_linux   # реальное Linux-окружение
+uv run pytest -m native_win     # реальное Windows-окружение
+uv run pytest                   # всё, что доступно на текущей ОС
 ```
 
-Покрытие кода приложения (`app/`, `updater/`, `scripts/`) на момент проверки — `73%`:
+Покрытие кода приложения (`app/`, `updater/`, `scripts/`) на момент проверки — `71%`:
 
 ```shell
 uv run pytest --cov=app --cov=updater --cov=scripts --cov-report=term-missing
@@ -311,8 +317,9 @@ uv run pytest --cov=app --cov=updater --cov=scripts --cov-report=term-missing
 - `docs/` — документация и ассеты: `docs/assets/` (`icon.png`, `icon.svg`; `icon.ico` генерируется при сборке).
 - `themes/` — пользовательские темы `*.json` + неактивные примеры `example_*.json.example` (см. `themes/README.md`).
 - `scripts/` — `build.py` (сборка win/linux по `--target`: версия, иконка, PyInstaller), `make_appdir.py` (AppDir для AppImage), `package_release.py` (zip + `SHA256SUMS.txt`), `smoke_wallhaven.py` (живой чек API без моков).
-- `tests/` — pytest-тесты.
+- `tests/` — общие pytest-тесты; `tests/native/` — native-проверки ОС (`native_linux`, `native_win`).
 - `ywallhaven*.spec` — PyInstaller-спеки: Windows (`ywallhaven.spec`, `ywallhaven-updater.spec`) и Linux (`ywallhaven-linux.spec`, `ywallhaven-updater-linux.spec`).
+- `.github/workflows/tests.yml` — тесты на push/PR и вызов из релизного workflow.
 - `.github/workflows/build-release.yml` — CI-сборка и публикация релизов.
 - `run.py` — шим для PyInstaller-спеков, вызывает `app.main.main`; для запуска из исходников используйте `uv run app/main.py`.
 - `config.example.json` — пояснительная шпаргалка по конфигу (не строгий JSON).
